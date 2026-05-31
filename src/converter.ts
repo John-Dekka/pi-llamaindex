@@ -8,6 +8,7 @@
 import { readFileSync } from "node:fs";
 import { extname, basename } from "node:path";
 import { parseYamlFrontmatter } from "./frontmatter.js";
+import type { LlamaIndexDocument } from "./types.js";
 
 /**
  * Convert a single file into one or more LlamaIndex Document instances.
@@ -21,7 +22,7 @@ import { parseYamlFrontmatter } from "./frontmatter.js";
  * @param li - LlamaIndex module (from dynamic import)
  * @returns Array of Document instances
  */
-export function fileToDocuments(fp: string, li: typeof import("llamaindex")): any[] {
+export function fileToDocuments(fp: string, li: typeof import("llamaindex")): LlamaIndexDocument[] {
 	let content: string;
 	try {
 		content = readFileSync(fp, "utf-8");
@@ -54,7 +55,7 @@ function convertYamlFile(
 	fileName: string,
 	baseMeta: Record<string, unknown>,
 	li: typeof import("llamaindex"),
-): any[] {
+): LlamaIndexDocument[] {
 	const { frontmatter, body } = parseYamlFrontmatter(content);
 
 	// Store tags as comma-separated string for reliable metadata filtering
@@ -92,7 +93,7 @@ function convertMarkdownFile(
 	fileName: string,
 	baseMeta: Record<string, unknown>,
 	li: typeof import("llamaindex"),
-): any[] {
+): LlamaIndexDocument[] {
 	const { frontmatter, body } = parseYamlFrontmatter(content);
 
 	const tagsStr = frontmatter.tags?.length

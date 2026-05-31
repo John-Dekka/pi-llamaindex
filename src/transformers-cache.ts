@@ -19,7 +19,11 @@ export async function configureTransformersCache() {
 		env.wasm = env.wasm || {};
 		env.wasm.numThreads = WASM_NUM_THREADS;
 	} catch {
-		// @huggingface/transformers may not be loaded yet, that's ok —
+		// @huggingface/transformers may not be loaded yet —
 		// the embedding model's getExtractor() will read env.cacheDir later.
+		// Log only in debug mode to avoid noise on first load.
+		if (process.env.PI_LLAMAINDEX_DEBUG) {
+			process.stderr.write("[llamaindex] transformers-cache: @huggingface/transformers not yet available\n");
+		}
 	}
 }

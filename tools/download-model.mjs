@@ -104,8 +104,9 @@ async function main() {
 }
 
 main().catch((err) => {
-  process.stderr.write(
-    `\r\x1b[2K[llamaindex] ⚠ Could not pre-download models: ${err.message}\n` +
-      `  Models will be downloaded on first use instead.\n`,
+  console.error(
+    `[llamaindex] ⚠ Could not pre-download models: ${err.message}\n` +
+    `  The embedding and reranker models will be downloaded on first query instead.\n` +
+    `  This may cause a delay of 30-60 seconds on first use.\n`,
   );
 });

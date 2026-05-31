@@ -17,13 +17,13 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 
 import { existsSync, statSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve, basename, relative } from "node:path";
+import { join, resolve, relative } from "node:path";
 
 import type { IndexState } from "./types.js";
 import { buildIndex, queryIndex } from "./llamaindex-engine.js";
-import { getState, setState, setIndex, getStorageDir, loadState, stateFile } from "./state.js";
+import { getState, setState, setIndex, getStorageDir, loadState, saveState, stateFile } from "./state.js";
 import { collectFiles, isAllowedFile } from "./scanner.js";
-import { BOLD, CYAN, DIM, GREEN, RST, progressBar, UI_WIDGET_KEY } from "./ui.js";
+import { BOLD, CYAN, DIM, GREEN, RESET, progressBar, UI_WIDGET_KEY } from "./ui.js";
 import {
 	DEFAULT_TOP_K,
 	MAX_TOP_K,
@@ -159,10 +159,11 @@ export default async function (pi: ExtensionAPI) {
 			}
 			return new Text(text, 0, 0);
 		},
-		execute: async (_toolCallId, params, signal) => {
+		execute: async (_toolCallId, params, signal, onUpdate) => {
 			if (signal?.aborted) {
 				return { content: [{ type: "text" as const, text: "Cancelled." }], details: {} };
 			}
+			onUpdate?.({ content: [{ type: "text" as const, text: "Retrieving from index..." }], details: {} });
 			const topK = Math.min(params.limit ?? DEFAULT_TOP_K, MAX_TOP_K);
 			const results = await queryIndex(params.query, topK, params.tags, signal);
 
@@ -219,11 +220,9 @@ export default async function (pi: ExtensionAPI) {
 				details: {},
 			};
 		},
-		renderResult(result, { expanded, isPartial }, theme) {
-			if (isPartial) {
-				return new Text(theme.fg("warning", "Querying LlamaIndex..."), 0, 0);
-			}
-
+		renderResult(result, { expanded }, theme) {
+			// Note: isPartial is intentionally absent — the execute handler calls
+			// onUpdate() once before retrieval, so the streaming UI shows progress.
 			const textContent = result.content.find(
 				(c: { type: string; text?: string }): c is { type: "text"; text: string } =>
 					c.type === "text" && typeof c.text === "string",
@@ -366,8 +365,8 @@ export default async function (pi: ExtensionAPI) {
 		ctx.ui.notify(`Indexing ${files.length} files with LlamaIndex…`, "info");
 
 		ctx.ui.setWidget(UI_WIDGET_KEY, [
-			`${BOLD}${CYAN}LlamaIndex: Indexing${RST}`,
-			`${DIM}Starting…${RST}`,
+			`${BOLD}${CYAN}LlamaIndex: Indexing${RESET}`,
+			`${DIM}Starting…${RESET}`,
 		]);
 		ctx.ui.setStatus(UI_WIDGET_KEY, "Indexing…");
 
@@ -379,9 +378,9 @@ export default async function (pi: ExtensionAPI) {
 					const pct = Math.round((current / total) * 100);
 					const bar = progressBar(current, total);
 					ctx.ui.setWidget(UI_WIDGET_KEY, [
-						`${BOLD}${CYAN}LlamaIndex: Indexing${RST}  ${bar}  ${GREEN}${pct}%${RST}`,
-						`${DIM}file:  ${RST}${file}`,
-						`${DIM}done:  ${RST}${GREEN}${current}${RST}/${total}`,
+						`${BOLD}${CYAN}LlamaIndex: Indexing${RESET}  ${bar}  ${GREEN}${pct}%${RESET}`,
+						`${DIM}file:  ${RESET}${file}`,
+						`${DIM}done:  ${RESET}${GREEN}${current}${RESET}/${total}`,
 					]);
 				},
 				ctx.signal,
@@ -434,12 +433,12 @@ export default async function (pi: ExtensionAPI) {
 		}
 	}
 
+	/** Usage message for /li query */
+	const QUERY_USAGE = "Usage: /li query <text> [<limit>] [--tag <tag> ...]";
+
 	async function cmdQuery(query: string, ctx: ExtensionCommandContext) {
 		if (!query) {
-			ctx.ui.notify(
-				"Usage: /li query <text> [<limit>] [--tag <tag> ...]",
-				"warning",
-			);
+			ctx.ui.notify(QUERY_USAGE, "warning");
 			return;
 		}
 
@@ -476,10 +475,7 @@ export default async function (pi: ExtensionAPI) {
 		const queryText = queryTokens.join(" ");
 
 		if (!queryText) {
-			ctx.ui.notify(
-				"Usage: /li query <text> [<limit>] [--tag <tag> ...]",
-				"warning",
-			);
+			ctx.ui.notify(QUERY_USAGE, "warning");
 			return;
 		}
 
@@ -606,17 +602,11 @@ export default async function (pi: ExtensionAPI) {
 		}
 
 		md += `| Storage directory | \`${storageDir}\` |\n`;
-		if (process.env.OPENAI_API_KEY) {
-			md += `| Embedding model | \`text-embedding-3-small\` (OpenAI) |\n`;
-		} else {
-			md += `| Embedding model | \`BAAI/bge-small-en-v1.5\` (local, no API key) |\n`;
-		}
+		const embedProvider = process.env.OPENAI_API_KEY
+			? "OpenAI (text-embedding-3-small)"
+			: "Local HuggingFace (BAAI/bge-small-en-v1.5, no API key needed)";
+		md += `| Embedding model | ${embedProvider} |\n`;
 		md += `| Supported files | \`.md\`, \`.yaml\`, \`.yml\` |\n`;
-
-		md += `\n### Environment\n\n`;
-		md += `| Variable | Status |\n|---|---|\n`;
-		md += `| \`OPENAI_API_KEY\` | ${process.env.OPENAI_API_KEY ? "✅ Set (using OpenAI)" : "❌ Not set (using local HuggingFace embeddings)"} |\n`;
-		md += `| Embedding location | ${process.env.OPENAI_API_KEY ? "API call" : "local (Transformers.js)"} |\n`;
 
 		if (state.indexedPaths && state.indexedPaths.length > 0) {
 			md += `\n### Indexed files (${state.indexedPaths.length})\n\n`;
@@ -693,5 +683,14 @@ export default async function (pi: ExtensionAPI) {
 	pi.on("session_start", async () => {
 		setIndex(null);
 		setState(loadState(getStorageDir()));
+	});
+
+	// ============
+	// Persist state on session shutdown
+	// ============
+
+	pi.on("session_shutdown", async () => {
+		const storageDir = getStorageDir();
+		saveState(storageDir, getState());
 	});
 }

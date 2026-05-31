@@ -32,7 +32,13 @@ process.env.ORT_NUM_THREADS = ORT_NUM_THREADS;
 // embedModel, etc.) is shared correctly at runtime. We suppress it
 // here before any dynamic import of llamaindex packages.
 
-function isSuppressedMessage(args: any[]): boolean {
+// Symbol guard: only intercept console once, even if this module is reloaded
+// or another extension also patches console methods. Using a symbol prevents
+// accidental collisions across extensions and reloads.
+const CONSOLE_WRAPPED = Symbol.for("pi-llamaindex:console-wrapped");
+const alreadyWrapped = (console as Record<symbol, boolean | undefined>)[CONSOLE_WRAPPED];
+
+function isSuppressedMessage(args: unknown[]): boolean {
 	return (
 		typeof args[0] === "string" &&
 		args[0].includes("llamaindex was already imported")
@@ -47,7 +53,9 @@ const __origLog = console.log.bind(console);
 // Debug logging setup
 // ============
 
-if (process.env.PI_LLAMAINDEX_DEBUG) {
+if (process.env.PI_LLAMAINDEX_DEBUG && !alreadyWrapped) {
+	(console as Record<symbol, boolean>)[CONSOLE_WRAPPED] = true;
+
 	let _logStream: Promise<import("node:fs").WriteStream> | null = null;
 
 	async function ensureLogStream(): Promise<import("node:fs").WriteStream> {
@@ -88,41 +96,44 @@ if (process.env.PI_LLAMAINDEX_DEBUG) {
 
 	// Tee stderr writes to the log file
 	const __origStderrWrite = process.stderr.write.bind(process.stderr);
-	process.stderr.write = ((chunk: any, ...args: any[]) => {
-		const msg = typeof chunk === "string" ? chunk : chunk.toString();
+	process.stderr.write = ((chunk: unknown, ...args: unknown[]) => {
+		const msg = typeof chunk === "string" ? chunk : String(chunk);
 		writeToLog("stderr", msg).catch(() => {});
 		return __origStderrWrite(chunk, ...args);
 	}) as typeof process.stderr.write;
 
 	// Capture console methods — single unified interception
-	console.log = (...args: any[]) => {
+	console.log = (...args: unknown[]) => {
 		if (!isSuppressedMessage(args)) {
 			writeToLog("log", args.map(String).join(" "));
 		}
 		return __origLog(...args);
 	};
 
-	console.warn = (...args: any[]) => {
+	console.warn = (...args: unknown[]) => {
 		if (!isSuppressedMessage(args)) {
 			writeToLog("warn", args.map(String).join(" "));
 		}
 		return __origWarn(...args);
 	};
 
-	console.error = (...args: any[]) => {
+	console.error = (...args: unknown[]) => {
 		if (!isSuppressedMessage(args)) {
 			writeToLog("error", args.map(String).join(" "));
 		}
 		return __origError(...args);
 	};
-} else {
-	// Non-debug mode: just suppress the "already imported" noise
-	console.warn = (...args: any[]) => {
+} else if (!alreadyWrapped) {
+	// Non-debug mode: just suppress the "already imported" noise.
+	// Avoid wrapping console methods if another instance already did.
+	(console as Record<symbol, boolean>)[CONSOLE_WRAPPED] = true;
+
+	console.warn = (...args: unknown[]) => {
 		if (isSuppressedMessage(args)) return;
 		return __origWarn(...args);
 	};
 
-	console.error = (...args: any[]) => {
+	console.error = (...args: unknown[]) => {
 		if (isSuppressedMessage(args)) return;
 		return __origError(...args);
 	};

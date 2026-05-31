@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-import type { IndexState } from "./types.js";
+import type { IndexState, LiModules, LlamaIndexIndex, RerankerModel } from "./types.js";
 import { GLOBAL_STATE_KEY } from "./config.js";
 
 // ============
@@ -18,30 +18,30 @@ import { GLOBAL_STATE_KEY } from "./config.js";
 // ============
 
 interface GlobalStore {
-	index: any | null;
+	index: LlamaIndexIndex | null;
 	state: IndexState;
-	liModules: Record<string, any> | null;
-	reranker: { tokenizer: any; model: any; softmax: Function } | null;
-	cachedEmbedModel: any;
+	liModules: LiModules | null;
+	reranker: RerankerModel | null;
+	cachedEmbedModel: unknown;
 }
 
 function getStore(): Partial<GlobalStore> {
-	const g = globalThis as any;
+	const g = globalThis as Record<symbol, Partial<GlobalStore>>;
 	if (!g[GLOBAL_STATE_KEY]) {
 		g[GLOBAL_STATE_KEY] = {};
 	}
-	return g[GLOBAL_STATE_KEY] as Partial<GlobalStore>;
+	return g[GLOBAL_STATE_KEY];
 }
 
 // ============
 // Index
 // ============
 
-export function getIndex(): any | null {
+export function getIndex(): LlamaIndexIndex | null {
 	return getStore().index ?? null;
 }
 
-export function setIndex(v: any | null) {
+export function setIndex(v: LlamaIndexIndex | null) {
 	getStore().index = v;
 }
 
@@ -73,11 +73,11 @@ export function setState(v: IndexState) {
 // LlamaIndex modules cache
 // ============
 
-export function getCachedLiModules(): Record<string, any> | null {
+export function getCachedLiModules(): LiModules | null {
 	return getStore().liModules ?? null;
 }
 
-export function setCachedLiModules(v: Record<string, any> | null) {
+export function setCachedLiModules(v: LiModules | null) {
 	getStore().liModules = v;
 }
 
@@ -85,11 +85,11 @@ export function setCachedLiModules(v: Record<string, any> | null) {
 // Embedding model cache
 // ============
 
-export function getCachedEmbedModel(): any {
+export function getCachedEmbedModel(): unknown {
 	return getStore().cachedEmbedModel;
 }
 
-export function setCachedEmbedModel(v: any) {
+export function setCachedEmbedModel(v: unknown) {
 	getStore().cachedEmbedModel = v;
 }
 
@@ -97,11 +97,11 @@ export function setCachedEmbedModel(v: any) {
 // Reranker cache
 // ============
 
-export function getCachedReranker(): { tokenizer: any; model: any; softmax: Function } | null {
+export function getCachedReranker(): RerankerModel | null {
 	return getStore().reranker ?? null;
 }
 
-export function setCachedReranker(v: { tokenizer: any; model: any; softmax: Function }) {
+export function setCachedReranker(v: RerankerModel) {
 	getStore().reranker = v;
 }
 

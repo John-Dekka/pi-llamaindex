@@ -11,7 +11,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join, basename } from "node:path";
 
-import type { IndexState, QueryResult } from "./types.js";
+import type { IndexState, LiModules, LlamaIndexDocument, LlamaIndexIndex, QueryResult } from "./types.js";
 import { configureTransformersCache } from "./transformers-cache.js";
 import { rerank } from "./reranker.js";
 import { fileToDocuments } from "./converter.js";
@@ -36,63 +36,80 @@ import {
 	LOCAL_EMBED_MODEL,
 	OPENAI_EMBED_MODEL,
 	INDEX_BATCH_SIZE,
+	DEDUP_BY_FILE,
 } from "./config.js";
 
 // ============
 // LlamaIndex lazy loading (with promise gate)
 // ============
 
-let _liModulesPromise: Promise<Record<string, any>> | null = null;
+let _liModulesPromise: Promise<LiModules> | null = null;
 
 /**
  * Ensure LlamaIndex modules are loaded and cached.
  *
  * Uses a promise gate to prevent concurrent duplicate imports.
  * Caches on globalThis for cross-reload persistence.
+ * On failure, resets the gate so the next call retries.
  */
 export async function ensureLiModules(): Promise<typeof import("llamaindex")> {
 	if (!_liModulesPromise) {
 		_liModulesPromise = (async () => {
 			const cached = getCachedLiModules();
-			if (cached) return cached;
+			if (cached) return cached.llamaindex;
 
 			// Must set cache dir BEFORE importing @llamaindex/huggingface
 			// so the env singleton has the right path when pipeline() is called.
 			await configureTransformersCache();
 
-			const modules = {
+			const modules: LiModules = {
 				llamaindex: await import("llamaindex"),
 				huggingface: await import("@llamaindex/huggingface"),
 				openai: await import("@llamaindex/openai"),
 			};
 			setCachedLiModules(modules);
-			return modules;
+			return modules.llamaindex;
 		})();
+
+		// Reset the promise gate on failure so subsequent calls can retry
+		_liModulesPromise = _liModulesPromise.catch((err) => {
+			_liModulesPromise = null;
+			throw new Error(`LlamaIndex modules failed to load. Ensure llamaindex and related packages are installed: ${(err as Error).message}`);
+		});
 	}
 
 	const modules = await _liModulesPromise;
-	return modules.llamaindex as typeof import("llamaindex");
+	return modules;
 }
 
 // ============
 // Embedding configuration
 // ============
 
-function getHfEmbeddingClass(): any {
+// Embedding constructor types — opaque since they come from dynamic imports
+type EmbeddingConstructor = new (config: Record<string, unknown>) => unknown;
+
+function getHfEmbeddingClass(): EmbeddingConstructor | undefined {
 	const cached = getCachedLiModules();
-	return cached?.huggingface?.HuggingFaceEmbedding;
+	return cached?.huggingface?.HuggingFaceEmbedding as EmbeddingConstructor | undefined;
 }
 
-function getOaEmbeddingClass(): any {
+function getOaEmbeddingClass(): EmbeddingConstructor | undefined {
 	const cached = getCachedLiModules();
-	return cached?.openai?.OpenAIEmbedding;
+	return cached?.openai?.OpenAIEmbedding as EmbeddingConstructor | undefined;
 }
+
+/** Whether configureEmbeddings has been called at least once. */
+let _embeddingsConfigured = false;
 
 /**
  * Configure the LlamaIndex embedding model.
  *
  * Uses OpenAI text-embedding-3-small if OPENAI_API_KEY is set,
  * otherwise falls back to local HuggingFace bge-small-en-v1.5.
+ *
+ * Idempotent — only constructs a new model if the cached one
+ * has a different constructor (i.e., switching providers).
  */
 export function configureEmbeddings(li: typeof import("llamaindex")) {
 	// Note: Settings.embedModel getter THROWS if not set (it doesn't return
@@ -101,9 +118,9 @@ export function configureEmbeddings(li: typeof import("llamaindex")) {
 	try {
 		if (key) {
 			const oaClass = getOaEmbeddingClass();
-			if (!getCachedEmbedModel() || getCachedEmbedModel().constructor !== oaClass) {
+			if (!getCachedEmbedModel() || (getCachedEmbedModel() as object).constructor !== oaClass) {
 				setCachedEmbedModel(
-					new oaClass({
+					new (oaClass as EmbeddingConstructor)({
 						apiKey: key,
 						model: OPENAI_EMBED_MODEL,
 					}),
@@ -112,9 +129,9 @@ export function configureEmbeddings(li: typeof import("llamaindex")) {
 			li.Settings.embedModel = getCachedEmbedModel();
 		} else {
 			const hfClass = getHfEmbeddingClass();
-			if (!getCachedEmbedModel() || getCachedEmbedModel().constructor !== hfClass) {
+			if (!getCachedEmbedModel() || (getCachedEmbedModel() as object).constructor !== hfClass) {
 				setCachedEmbedModel(
-					new hfClass({
+					new (hfClass as EmbeddingConstructor)({
 						modelType: LOCAL_EMBED_MODEL,
 						modelOptions: {
 							quantized: true,
@@ -125,10 +142,21 @@ export function configureEmbeddings(li: typeof import("llamaindex")) {
 			}
 			li.Settings.embedModel = getCachedEmbedModel();
 		}
+		_embeddingsConfigured = true;
 	} catch (err) {
 		throw new Error(
 			`Failed to set embed model${key ? " (OpenAI)" : " (HuggingFace)"}: ${(err as Error).message}`,
 		);
+	}
+}
+
+/**
+ * Ensure embeddings are configured (idempotent).
+ * Skips if already configured since last startup.
+ */
+export function ensureEmbeddings(li: typeof import("llamaindex")): void {
+	if (!_embeddingsConfigured) {
+		configureEmbeddings(li);
 	}
 }
 
@@ -142,7 +170,7 @@ export function configureEmbeddings(li: typeof import("llamaindex")) {
  * If the index is already cached in memory, returns it directly.
  * Falls back to loading from the storage directory.
  */
-export async function loadIndex(storageDir: string, signal?: AbortSignal): Promise<any> {
+export async function loadIndex(storageDir: string, signal?: AbortSignal): Promise<LlamaIndexIndex | null> {
 	if (signal?.aborted) return null;
 	if (getIndex()) return getIndex();
 
@@ -152,10 +180,10 @@ export async function loadIndex(storageDir: string, signal?: AbortSignal): Promi
 	try {
 		const li = await ensureLiModules();
 		const storageContext = await li.storageContextFromDefaults({ persistDir });
-		const index = await li.VectorStoreIndex.init({
+		const index = (await li.VectorStoreIndex.init({
 			storageContext,
 			nodes: [],
-		});
+		})) as unknown as LlamaIndexIndex;
 		setIndex(index);
 		setState(loadState(storageDir));
 		return index;
@@ -217,7 +245,7 @@ export async function buildIndex(
 	const persistDir = join(storageDir, "storage");
 	mkdirSync(persistDir, { recursive: true });
 
-	configureEmbeddings(li);
+	ensureEmbeddings(li);
 
 	let index = await loadIndex(storageDir, signal);
 	if (signal?.aborted) return { documents: 0, failed: 0 };
@@ -234,7 +262,7 @@ export async function buildIndex(
 	// Ensure an index exists before inserting documents
 	if (!index) {
 		const storageContext = await li.storageContextFromDefaults({ persistDir });
-		index = await li.VectorStoreIndex.init({ storageContext, nodes: [] });
+		index = (await li.VectorStoreIndex.init({ storageContext, nodes: [] })) as unknown as LlamaIndexIndex;
 	}
 
 	// Process files in batches to avoid holding all documents in memory.
@@ -262,7 +290,7 @@ export async function buildIndex(
 		const batchFiles = newFiles.slice(batchStart, batchStart + INDEX_BATCH_SIZE);
 
 		// Phase 1: Read and parse files into documents (fast, CPU-bound)
-		const batchDocs: any[] = [];
+		const batchDocs: LlamaIndexDocument[] = [];
 		for (let i = 0; i < batchFiles.length; i++) {
 			if (signal?.aborted) return { documents: totalInserted, failed: failedCount };
 			const fp = batchFiles[i];
@@ -291,7 +319,7 @@ export async function buildIndex(
 			const fileName =
 				(doc.metadata as Record<string, unknown>)?.fileName as string ||
 				`doc ${globalIdx}`;
-			await index.insert(doc);
+			await (index as LlamaIndexIndex).insert(doc);
 			onProgress?.(globalIdx, totalDocs || docsThisBatch, fileName);
 		}
 
@@ -299,7 +327,7 @@ export async function buildIndex(
 
 		// Collect tags from this batch's documents
 		for (const doc of batchDocs) {
-			const rawTags = (doc.metadata as Record<string, unknown>)?.tags;
+			const rawTags = doc.metadata?.tags;
 			const parsed = parseTags(rawTags);
 			for (const t of parsed) {
 				allTags.add(t);
@@ -363,7 +391,7 @@ export async function queryIndex(
 
 	// Embeddings must be configured before loading the index and before
 	// retrieving — the retriever needs them to embed the query text.
-	configureEmbeddings(li);
+	ensureEmbeddings(li);
 	if (signal?.aborted) return [];
 
 	let index = getIndex();
@@ -377,14 +405,24 @@ export async function queryIndex(
 	// relevant hits while keeping memory/CPU under control (60 caused OOM on CPU).
 	const retriever = index.asRetriever({ similarityTopK: RETRIEVER_TOP_K });
 	let nodes = await retriever.retrieve({ query });
+	if (!index) {
+		index = await loadIndex(storageDir, signal);
+		if (!index || signal?.aborted) return [];
+	}
+
+	// Stage 1: Retrieve N candidates with the bi-encoder (fast, broad).
+	// The cross-encoder reranks these — RETRIEVER_TOP_K is enough to cover
+	// relevant hits while keeping memory/CPU under control (60 caused OOM on CPU).
+
 
 	if (!nodes || nodes.length === 0) return [];
 
 	// Post-filter by tags if requested (check metadata tags field)
 	if (filterTags && filterTags.length > 0) {
 		const lowerTags = filterTags.map((t) => t.toLowerCase());
-		nodes = nodes.filter((source: any) => {
-			const meta = source.node.metadata ?? {};
+		nodes = nodes.filter((source) => {
+			const node = (source as Record<string, unknown>).node as Record<string, unknown>;
+			const meta: Record<string, unknown> = (node.metadata as Record<string, unknown>) ?? {};
 			const rawTags = meta.tags;
 			const metaTags = Array.isArray(rawTags)
 				? (rawTags as string[]).join(", ")
@@ -401,13 +439,13 @@ export async function queryIndex(
 	if (nodes.length === 0) return [];
 
 	// Build candidate results for the reranker
-	const candidates: QueryResult[] = nodes.map((source: any) => {
-		const node = source.node;
-		const meta = node.metadata ?? {};
+	const candidates: QueryResult[] = nodes.map((source) => {
+		const node = (source as Record<string, unknown>).node as Record<string, unknown>;
+		const meta: Record<string, unknown> = (node.metadata as Record<string, unknown>) ?? {};
 		const file = (meta.file as string) || "unknown";
 		return {
-			text: node.getContent(li.MetadataMode.NONE).slice(0, MAX_CHUNK_LENGTH),
-			score: isFinite(source.score) ? source.score : 0,
+			text: ((node.getContent as (mode: unknown) => string)(li.MetadataMode.NONE)).slice(0, MAX_CHUNK_LENGTH),
+			score: isFinite((source as Record<string, unknown>).score as number) ? (source as Record<string, unknown>).score as number : 0,
 			file,
 			fileName: (meta.fileName as string) || basename(file),
 			title: (meta.title as string) || undefined,

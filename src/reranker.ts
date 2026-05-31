@@ -24,6 +24,7 @@ async function ensureReranker(signal?: AbortSignal) {
 		} = await import("@huggingface/transformers");
 
 		const tokenizer = await AutoTokenizer.from_pretrained(RERANKER_MODEL);
+		if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
 		const model = await AutoModelForSequenceClassification.from_pretrained(
 			RERANKER_MODEL,
 			{ quantized: true, dtype: "fp32" },
