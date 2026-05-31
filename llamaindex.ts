@@ -338,7 +338,7 @@ let _oaEmbedding: any = null;
 // relevance accuracy. The cross-encoder processes query+document pairs
 // through a transformer jointly, which the bi-encoder fundamentally can't.
 
-let _reranker: { tokenizer: any; model: any } | null = null;
+let _reranker: { tokenizer: any; model: any; softmax: Function } | null = null;
 
 async function ensureReranker() {
 	if (!_reranker) {
@@ -363,7 +363,7 @@ async function ensureReranker() {
 			{ quantized: true, dtype: "fp32" },
 		);
 
-		_reranker = { tokenizer, model };
+		_reranker = { tokenizer, model, softmax };
 	}
 	return _reranker;
 }
@@ -374,7 +374,7 @@ async function rerank(
 ): Promise<QueryResult[]> {
 	if (candidates.length === 0) return [];
 
-	const { tokenizer, model } = await ensureReranker();
+	const { tokenizer, model, softmax } = await ensureReranker();
 
 	// Encode each query+document as a proper tokenizer pair so the
 	// cross-encoder sees [CLS] query [SEP] document [SEP] with distinct
