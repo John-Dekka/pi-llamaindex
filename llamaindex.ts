@@ -1244,44 +1244,24 @@ export default async function (pi: ExtensionAPI) {
 			return;
 		}
 
-		// Parse --tag arguments from the query string
-		const parts = query.split(/(?=\s+--tag\s+)/);
-		let queryText: string;
+		// Parse --tag <value> flags from the query string.
+		// We split into tokens properly so "my --tag thing" doesn't match
+		// a literal "--tag" inside the query text — only `--tag` as its
+		// own whitespace-delimited token is treated as a filter flag.
+		const tokens = query.trim().split(/\s+/);
 		const filterTags: string[] = [];
-
-		if (parts.length > 1 || query.includes("--tag")) {
-			// Has --tag flags; parse them out
-			const tokens: string[] = [];
-			let i = 0;
-			while (i < query.length) {
-				const tagIdx = query.indexOf("--tag", i);
-				if (tagIdx === -1) {
-					tokens.push(query.slice(i));
-					break;
-				}
-				// Text before --tag
-				if (tagIdx > i) {
-					tokens.push(query.slice(i, tagIdx));
-				}
-				// Find the tag value (next whitespace-delimited token after --tag)
-				const afterFlag = tagIdx + 5;
-				if (afterFlag >= query.length) break;
-				const tagStart = query.slice(afterFlag).search(/\S/);
-				if (tagStart === -1) break;
-				const tagValueStart = afterFlag + tagStart;
-				const tagValueEnd = query.indexOf(" ", tagValueStart);
-				const tagVal = tagValueEnd === -1
-					? query.slice(tagValueStart).trim()
-					: query.slice(tagValueStart, tagValueEnd).trim();
-				if (tagVal) {
-					filterTags.push(tagVal);
-				}
-				i = tagValueEnd === -1 ? query.length : tagValueEnd;
+		const queryTokens: string[] = [];
+		let i = 0;
+		while (i < tokens.length) {
+			if (tokens[i] === "--tag" && i + 1 < tokens.length) {
+				filterTags.push(tokens[i + 1]);
+				i += 2;
+			} else {
+				queryTokens.push(tokens[i]);
+				i++;
 			}
-			queryText = tokens.join("").trim();
-		} else {
-			queryText = query;
 		}
+		const queryText = queryTokens.join(" ");
 
 		if (!queryText) {
 			ctx.ui.notify(
