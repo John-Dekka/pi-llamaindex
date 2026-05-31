@@ -243,7 +243,7 @@ let _oaEmbedding: any = null;
 
 // ─── Cross-encoder reranker ────────────────────────────────────────────
 // After retrieving candidates via the bi-encoder (bge-small-en-v1.5), we
-// re-rank them with a cross-encoder (bge-reranker-v2-m3) for much better
+// re-rank them with a cross-encoder (Xenova/bge-reranker-base) for much better
 // relevance accuracy. The cross-encoder processes query+document pairs
 // through a transformer jointly, which the bi-encoder fundamentally can't.
 
@@ -264,7 +264,7 @@ async function ensureReranker() {
     // Must set env.cacheDir before loading the model so it caches there.
     env.cacheDir = cacheDir;
 
-    const modelName = "BAAI/bge-reranker-v2-m3";
+    const modelName = "Xenova/bge-reranker-base";
 
     const tokenizer = await AutoTokenizer.from_pretrained(modelName);
     const model = await AutoModelForSequenceClassification.from_pretrained(
@@ -301,7 +301,7 @@ async function rerank(
   const { logits } = await model(inputs);
 
   // logits shape: [batch_size, num_labels]
-  // For BAAI/bge-reranker-v2-m3, label 1 is the relevance score.
+  // For Xenova/bge-reranker-base, label 1 is the relevance score.
   const batchSize = logits.dims[0];
   const numLabels = logits.dims[1];
 

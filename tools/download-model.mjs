@@ -44,12 +44,12 @@ async function downloadReranker() {
   // (not the pipeline), so we load it the same way the extension does.
 
   process.stderr.write(
-    `\r\x1b[2K[llamaindex] Downloading reranker model BAAI/bge-reranker-v2-m3 …\n`
+    `\r\x1b[2K[llamaindex] Downloading reranker model Xenova/bge-reranker-base …\n`
   );
 
-  const tokenizer = await AutoTokenizer.from_pretrained("BAAI/bge-reranker-v2-m3");
+  const tokenizer = await AutoTokenizer.from_pretrained("Xenova/bge-reranker-base");
   const model = await AutoModelForSequenceClassification.from_pretrained(
-    "BAAI/bge-reranker-v2-m3",
+    "Xenova/bge-reranker-base",
     { quantized: true, dtype: "fp32" },
   );
 
