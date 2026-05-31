@@ -2,6 +2,7 @@
  * pi-llamaindex — RAG extension for the Pi coding agent
  *
  * Indexes YAML frontmatter files and Markdown files using LlamaIndex
+ * (frontmatter parsed from .yaml, .yml, .md, and .mdx)
  * for semantic retrieval. The agent can query the index via the
  * `li_query` tool; users can manage it via `/li` commands.
  *
@@ -777,10 +778,41 @@ function fileToDocuments(fp: string, li: typeof import("llamaindex")): any[] {
 		return [new li.Document({ text: textParts.join("\n\n"), metadata })];
 	}
 
+	// Also parse YAML frontmatter from .md/.mdx files (common in Hugo, Jekyll, etc.)
+	const { frontmatter, body } = parseYamlFrontmatter(content);
+
+	const tagsStr = frontmatter.tags?.length
+		? frontmatter.tags.join(", ")
+		: "";
+
+	const metadata: Record<string, unknown> = {
+		...baseMeta,
+		type: "markdown",
+		tags: tagsStr,
+		...Object.fromEntries(
+			Object.entries(frontmatter).filter(
+				([k, v]) => k !== "tags" && v !== undefined,
+			),
+		),
+	};
+
+	if (body !== content) {
+		// Has frontmatter — combine metadata into a rich text representation
+		const textParts: string[] = [];
+		if (frontmatter.title) textParts.push(`# ${frontmatter.title}`);
+		if (frontmatter.category)
+			textParts.push(`Category: ${frontmatter.category}`);
+		if (tagsStr) textParts.push(`Tags: ${tagsStr}`);
+		textParts.push(body);
+
+		return [new li.Document({ text: textParts.join("\n\n"), metadata })];
+	}
+
+	// No frontmatter, plain markdown
 	return [
 		new li.Document({
 			text: content,
-			metadata: { ...baseMeta, type: "markdown" },
+			metadata,
 		}),
 	];
 }
@@ -992,7 +1024,7 @@ export default async function (pi: ExtensionAPI) {
 		name: "li_tags",
 		label: "LlamaIndex Tags",
 		description:
-			"List all unique tags from the indexed YAML frontmatter files. " +
+			"List all unique tags from the indexed files (extracted from YAML frontmatter). " +
 			"Returns tag names and how many files have each tag. " +
 			"Use this to discover available tags before querying with --tag filters.",
 		promptSnippet:
@@ -1393,7 +1425,7 @@ export default async function (pi: ExtensionAPI) {
 				content:
 					"## 🏷️ LlamaIndex Tags\n\n" +
 					"No tags found. Tags are extracted from the `tags:` field " +
-					"in YAML frontmatter (`---` blocks) of indexed `.yaml`/`.yml` files.",
+					"in YAML frontmatter (`---` blocks) of indexed files.",
 				display: true,
 			});
 			return;
