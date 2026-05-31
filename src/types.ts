@@ -15,6 +15,8 @@ export interface IndexState {
 	fileCount: number;
 	chunkCount: number;
 	tags: string[];
+	/** Embedding model used to build this index (for stale-detection on model switch). */
+	embedModel?: string;
 }
 
 export interface QueryResult {

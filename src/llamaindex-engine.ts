@@ -160,6 +160,13 @@ export function ensureEmbeddings(li: typeof import("llamaindex")): void {
 	}
 }
 
+/**
+ * Return the name of the currently active embedding model.
+ */
+export function getActiveEmbedModelName(): string {
+	return process.env.OPENAI_API_KEY ? OPENAI_EMBED_MODEL : LOCAL_EMBED_MODEL;
+}
+
 // ============
 // Index loading
 // ============
@@ -320,15 +327,34 @@ export async function buildIndex(
 
 		// Phase 2: Insert documents one-by-one with progress tracking.
 		// The embedding + storage is the slow part — progress bar drives UX.
-		for (let i = 0; i < docsThisBatch; i++) {
-			if (signal?.aborted) return { documents: totalInserted, failed: failedCount };
-			const doc = batchDocs[i];
-			const globalIdx = totalInserted + i + 1;
-			const fileName =
-				(doc.metadata as Record<string, unknown>)?.fileName as string ||
-				`doc ${globalIdx}`;
-			await (index as LlamaIndexIndex).insert(doc);
-			onProgress?.(globalIdx, totalDocs || docsThisBatch, fileName);
+		// Wrapped in try-catch so partial progress is saved even if a single
+		// document insertion fails partway through the batch.
+		try {
+			for (let i = 0; i < docsThisBatch; i++) {
+				if (signal?.aborted) return { documents: totalInserted, failed: failedCount };
+				const doc = batchDocs[i];
+				const globalIdx = totalInserted + i + 1;
+				const fileName =
+					(doc.metadata as Record<string, unknown>)?.fileName as string ||
+					`doc ${globalIdx}`;
+				await (index as LlamaIndexIndex).insert(doc);
+				onProgress?.(globalIdx, totalDocs || docsThisBatch, fileName);
+			}
+		} catch (err) {
+			// Save partial state before rethrowing so chunkCount stays consistent
+			const embedModel = getActiveEmbedModelName();
+			const partialMergedPaths = new Set([...existingPaths, ...newFiles.slice(0, batchStart + batchFiles.length)]);
+			const partialState: IndexState = {
+				indexedPaths: [...partialMergedPaths],
+				indexedAt: new Date().toISOString(),
+				fileCount: partialMergedPaths.size,
+				chunkCount: getState().chunkCount + totalInserted,
+				tags: [...allTags],
+				embedModel,
+			};
+			setState(partialState);
+			saveState(storageDir, partialState);
+			throw err; // rethrow so the caller sees the failure
 		}
 
 		totalInserted += docsThisBatch;
@@ -345,6 +371,7 @@ export async function buildIndex(
 
 	setIndex(index);
 
+	const embedModel = getActiveEmbedModelName();
 	const mergedPaths = new Set([...existingPaths, ...files]);
 	const newState: IndexState = {
 		indexedPaths: [...mergedPaths],
@@ -352,6 +379,7 @@ export async function buildIndex(
 		fileCount: mergedPaths.size,
 		chunkCount: getState().chunkCount + totalInserted,
 		tags: [...allTags],
+		embedModel,
 	};
 	setState(newState);
 	saveState(storageDir, newState);
@@ -401,6 +429,17 @@ export async function queryIndex(
 	// retrieving — the retriever needs them to embed the query text.
 	ensureEmbeddings(li);
 	if (signal?.aborted) return [];
+
+	// Check for embedding model mismatch (stale index)
+	const state = loadState(storageDir);
+	const activeModel = getActiveEmbedModelName();
+	if (state.embedModel && state.embedModel !== activeModel) {
+		process.stderr.write(
+			`\r\x1b[2K[llamaindex] Warning: index was built with "${state.embedModel}" ` +
+			`but the active model is "${activeModel}". ` +
+			`Results may be degraded. Run \`/li rebuild\` to recreate the index.\n`,
+		);
+	}
 
 	let index = getIndex();
 	if (!index) {

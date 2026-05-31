@@ -55,6 +55,7 @@ const STATE_DEFAULTS: IndexState = {
 	fileCount: 0,
 	chunkCount: 0,
 	tags: [],
+	embedModel: undefined,
 };
 
 export function getState(): IndexState {

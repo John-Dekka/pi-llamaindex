@@ -20,7 +20,7 @@ import { existsSync, statSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 
 import type { IndexState } from "./types.js";
-import { buildIndex, queryIndex } from "./llamaindex-engine.js";
+import { buildIndex, queryIndex, getActiveEmbedModelName } from "./llamaindex-engine.js";
 import { parseQueryArgs } from "./query-args.js";
 import { getState, setState, setIndex, getStorageDir, loadState, saveState, stateFile } from "./state.js";
 import { collectFiles, isAllowedFile } from "./scanner.js";
@@ -342,7 +342,7 @@ export default async function (pi: ExtensionAPI) {
 			}
 			// Reset in-memory state so buildIndex starts fresh
 			setIndex(null);
-			const emptyState: IndexState = { indexedPaths: [], indexedAt: null, fileCount: 0, chunkCount: 0, tags: [] };
+			const emptyState: IndexState = { indexedPaths: [], indexedAt: null, fileCount: 0, chunkCount: 0, tags: [], embedModel: undefined };
 			setState(emptyState);
 			// Also wipe the state file itself
 			try { writeFileSync(stateFile(storageDir), JSON.stringify(emptyState)); } catch { /* ignore */ }
@@ -574,9 +574,11 @@ export default async function (pi: ExtensionAPI) {
 		}
 
 		md += `| Storage directory | \`${storageDir}\` |\n`;
-		const embedProvider = process.env.OPENAI_API_KEY
-			? "OpenAI (text-embedding-3-small)"
-			: "Local HuggingFace (BAAI/bge-small-en-v1.5, no API key needed)";
+		const activeModelName = getActiveEmbedModelName();
+		const storedModel = state.embedModel;
+		const embedProvider = storedModel
+			? `${activeModelName}${storedModel !== activeModelName ? ` (index built with ${storedModel})` : ""}`
+			: activeModelName;
 		md += `| Embedding model | ${embedProvider} |\n`;
 		md += `| Supported files | \`.md\`, \`.yaml\`, \`.yml\` |\n`;
 
