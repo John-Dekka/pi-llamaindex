@@ -19,6 +19,17 @@
  */
 
 // ============
+// ONNX runtime thread limit
+// ============
+
+// onnxruntime-node spawns one thread per CPU core by default (24+ threads).
+// That shows up as ~2 dozen "process forks" in ps/top and wastes RAM.
+// Set these BEFORE any onnxruntime init to limit thread pool size.
+
+process.env.OMP_NUM_THREADS = "2";
+process.env.ORT_NUM_THREADS = "2";
+
+// ============
 // LlamaIndex warning suppression
 // ============
 
@@ -352,8 +363,9 @@ async function ensureReranker() {
 			softmax,
 		} = await import("@huggingface/transformers");
 
-		// Must set env.cacheDir before loading the model so it caches there.
+		// Must set env.cacheDir + thread limit before loading the model so it caches there.
 		env.cacheDir = cacheDir;
+		env.wasm.numThreads = 2;
 
 		const modelName = "Xenova/bge-reranker-base";
 
@@ -422,6 +434,7 @@ async function configureTransformersCache() {
 	try {
 		const { env } = await import("@huggingface/transformers");
 		env.cacheDir = cacheDir;
+		env.wasm.numThreads = 2;
 	} catch {
 		// @huggingface/transformers may not be loaded yet, that's ok —
 		// the embedding model's getExtractor() will read env.cacheDir later.
