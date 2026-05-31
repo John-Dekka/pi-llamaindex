@@ -1,0 +1,25 @@
+{
+  "name": "pi-llamaindex",
+  "version": "0.2.0",
+  "description": "RAG extension for the Pi coding agent — indexes YAML and Markdown files using LlamaIndex for semantic retrieval.",
+  "keywords": ["pi-package", "pi", "extension", "llamaindex", "rag", "retrieval", "search", "embedding"],
+  "type": "module",
+  "pi": {
+    "extensions": ["./llamaindex.ts"]
+  },
+  "dependencies": {
+    "llamaindex": "^0.12.1",
+    "@llamaindex/huggingface": "^0.1.0",
+    "@llamaindex/openai": "^0.1.0",
+    "@sinclair/typebox": "^0.34.49",
+    "js-yaml": "^4.1.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.60.0",
+    "@earendil-works/pi-tui": "*"
+  },
+  "scripts": {
+    "postinstall": "node tools/download-model.mjs"
+  },
+  "license": "MIT"
+}
