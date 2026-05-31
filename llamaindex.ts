@@ -478,7 +478,7 @@ async function ensureLiModules() {
 		await configureTransformersCache();
 
 		_liModules = {
-			lamaindex: await import("llamaindex"),
+			llamaindex: await import("llamaindex"),
 			huggingface: await import("@llamaindex/huggingface"),
 			openai: await import("@llamaindex/openai"),
 		};
@@ -488,7 +488,7 @@ async function ensureLiModules() {
 	// _liModules came from globalThis cache.
 	_hfEmbedding = _liModules.huggingface.HuggingFaceEmbedding;
 	_oaEmbedding = _liModules.openai.OpenAIEmbedding;
-	return _liModules.lamaindex as typeof import("llamaindex");
+	return _liModules.llamaindex as typeof import("llamaindex");
 }
 
 // ============
@@ -1088,22 +1088,22 @@ export default async function (pi: ExtensionAPI) {
 	// Command implementations
 	// ============
 
-	async function cmdIndex(path: string, ctx: ExtensionCommandContext) {
+	async function cmdIndex(indexPath: string, ctx: ExtensionCommandContext) {
 		// Parse optional --rebuild flag
-		const rebuild = path.includes("--rebuild");
-		path = path.replace(/\s*--rebuild\s*/, "").trim();
+		const rebuild = indexPath.includes("--rebuild");
+		indexPath = indexPath.replace(/\s*--rebuild\s*/, "").trim();
 
-		if (!path) {
+		if (!indexPath) {
 			// Default: re-index the same directory as the last indexed path
 			const lastPath = _state.indexedPaths[0];
-			path = lastPath ? join(lastPath, "..") : ".";
+			indexPath = lastPath ? join(lastPath, "..") : ".";
 		}
-		if (!existsSync(path)) {
-			ctx.ui.notify(`Path not found: ${path}`, "error");
+		if (!existsSync(indexPath)) {
+			ctx.ui.notify(`Path not found: ${indexPath}`, "error");
 			return;
 		}
 
-		const absPath = resolve(path);
+		const absPath = resolve(indexPath);
 		const storageDir = getStorageDir();
 
 		if (rebuild) {
