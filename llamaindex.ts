@@ -34,6 +34,83 @@ console.warn = (...args: any[]) => {
 };
 
 // ============
+// Debug logging
+// ============
+
+// Set PI_LLAMAINDEX_DEBUG=1 to capture all stderr output and console
+// messages to ~/.pi/Llamaindex/debug.log (or PI_LLAMAINDEX_DIR/debug.log).
+// This includes output from Transformers.js, LlamaIndex, and the extension.
+// Strips ANSI escape codes for a clean log.
+
+if (process.env.PI_LLAMAINDEX_DEBUG) {
+	let _logStream: Promise<import("node:fs").WriteStream> | null = null;
+
+	async function ensureLogStream(): Promise<import("node:fs").WriteStream> {
+		if (!_logStream) {
+			_logStream = (async () => {
+				const { mkdirSync, createWriteStream } = await import("node:fs");
+				const { join } = await import("node:path");
+				const { homedir } = await import("node:os");
+
+				const override = process.env.PI_LLAMAINDEX_DIR;
+				const dir = override || join(homedir(), ".pi", "Llamaindex");
+				mkdirSync(dir, { recursive: true });
+
+				const logFile = join(dir, "debug.log");
+				const stream = createWriteStream(logFile, { flags: "a" });
+				stream.write(`\n=== pi-llamaindex debug log started ${new Date().toISOString()} ===\n`);
+				return stream;
+			})();
+		}
+		return _logStream;
+	}
+
+	// Helper: strip ANSI codes from a string
+	function stripAnsi(s: string): string {
+		return s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+	}
+
+	// Tee stderr writes to the log file
+	const __origStderrWrite = process.stderr.write.bind(process.stderr);
+	process.stderr.write = ((chunk: any, ...args: any[]) => {
+		ensureLogStream().then((stream) => {
+			const timestamp = new Date().toISOString();
+			const msg = typeof chunk === "string" ? chunk : chunk.toString();
+			stream.write(`[${timestamp}] ${stripAnsi(msg)}`);
+		}).catch(() => {});
+		return __origStderrWrite(chunk, ...args);
+	}) as typeof process.stderr.write;
+
+	// Also capture console methods
+	const __origConsoleLog = console.log.bind(console);
+	console.log = (...args: any[]) => {
+		ensureLogStream().then((stream) => {
+			const timestamp = new Date().toISOString();
+			stream.write(`[${timestamp}] [log] ${args.map(String).join(" ")}\n`);
+		}).catch(() => {});
+		return __origConsoleLog(...args);
+	};
+
+	const __origConsoleWarn = console.warn.bind(console);
+	console.warn = ((...args: any[]) => {
+		__origConsoleWarn(...args);
+		ensureLogStream().then((stream) => {
+			const timestamp = new Date().toISOString();
+			stream.write(`[${timestamp}] [warn] ${args.map(String).join(" ")}\n`);
+		}).catch(() => {});
+	}) as typeof console.warn;
+
+	const __origConsoleError = console.error.bind(console);
+	console.error = (...args: any[]) => {
+		ensureLogStream().then((stream) => {
+			const timestamp = new Date().toISOString();
+			stream.write(`[${timestamp}] [error] ${args.map(String).join(" ")}\n`);
+		}).catch(() => {});
+		return __origConsoleError(...args);
+	};
+}
+
+// ============
 // Static imports (no llamaindex dependencies)
 // ============
 
