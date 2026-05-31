@@ -376,35 +376,40 @@ async function rerank(
 
 	const { tokenizer, model, softmax } = await ensureReranker();
 
-	// Encode each query+document as a proper tokenizer pair so the
-	// cross-encoder sees [CLS] query [SEP] document [SEP] with distinct
-	// segment embeddings — essential for the model to understand which
-	// tokens belong to the query vs the document.
-	const queries = candidates.map(() => query);
-	const documents = candidates.map((c) => c.text);
+	// Process candidates in batches of 10 to avoid OOM. The ONNX runtime
+	// allocates memory proportional to batch_size x max_seq_len x hidden_size.
+	// A batch of 10 x ~512 tokens x 768 hidden units fits comfortably on CPU.
+	const BATCH_SIZE = 10;
+	const allScores: number[] = [];
 
-	const inputs = await tokenizer(queries, {
-		text_pair: documents,
-		padding: true,
-		truncation: true,
-	});
+	for (let offset = 0; offset < candidates.length; offset += BATCH_SIZE) {
+		const batch = candidates.slice(offset, offset + BATCH_SIZE);
 
-	const { logits } = await model(inputs);
+		const queries = batch.map(() => query);
+		const documents = batch.map((c) => c.text);
 
-	// logits shape: [batch_size, num_labels]
-	// For Xenova/bge-reranker-base, label 1 is the relevance score.
-	const batchSize = logits.dims[0];
-	const numLabels = logits.dims[1];
+		const inputs = await tokenizer(queries, {
+			text_pair: documents,
+			padding: true,
+			truncation: true,
+		});
 
-	const scores: number[] = [];
-	for (let i = 0; i < batchSize; i++) {
-		const row = logits.data.slice(i * numLabels, (i + 1) * numLabels);
-		const probs = softmax(row);
-		scores.push(probs[1]); // index 1 = relevant (positive) class
+		const { logits } = await model(inputs);
+
+		// logits shape: [batch_size, num_labels]
+		// For Xenova/bge-reranker-base, label 1 is the relevance score.
+		const batchSize = logits.dims[0];
+		const numLabels = logits.dims[1];
+
+		for (let i = 0; i < batchSize; i++) {
+			const row = logits.data.slice(i * numLabels, (i + 1) * numLabels);
+			const probs = softmax(row);
+			allScores.push(probs[1]); // index 1 = relevant (positive) class
+		}
 	}
 
 	return candidates
-		.map((c, i) => ({ ...c, score: scores[i] }))
+		.map((c, i) => ({ ...c, score: allScores[i] }))
 		.sort((a, b) => b.score - a.score);
 	// NOTE: no .slice() — the caller deduplicates first, then slices.
 }
@@ -602,8 +607,10 @@ async function queryIndex(
 		if (!index) return [];
 	}
 
-	// Stage 1: Retrieve 60 candidates with the bi-encoder (fast, broad)
-	const retriever = index.asRetriever({ similarityTopK: 60 });
+	// Stage 1: Retrieve 20 candidates with the bi-encoder (fast, broad).
+	// The cross-encoder reranks these — 20 is enough to cover relevant hits
+	// while keeping memory/CPU under control (60 caused OOM on CPU).
+	const retriever = index.asRetriever({ similarityTopK: 20 });
 	let nodes = await retriever.retrieve({ query });
 
 	if (!nodes || nodes.length === 0) return [];
