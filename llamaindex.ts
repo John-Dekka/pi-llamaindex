@@ -210,8 +210,6 @@ interface QueryResult {
 	category?: string;
 	tags?: string;
 	description?: string;
-	/** Debug info about score source, only populated when score is 0 */
-	debugScore?: string;
 }
 
 // ============
@@ -481,12 +479,10 @@ async function rerank(
 		const { logits } = await model(inputs);
 
 		// logits shape: typically [batch_size, num_labels], but some ONNX models
-		// (including Xenova/ms-marco-MiniLM-L-12-v2) output [batch_size, 1, num_labels]
-		// with an extra middle dimension. Always use the LAST dim for numLabels.
-		// For ms-marco-MiniLM-L-12-v2, label 1 is the relevance (positive) class.
-		process.stderr.write(
-			`[llamaindex] debug reranker logits dims=[${logits.dims.join(",")}] data.length=${logits.data.length}\n`,
-		);
+		// (including Xenova/ms-marco-MiniLM-L-12-v2) output a SINGLE logit per sample
+		// (shape [batch, 1] or [batch, 1, 1]) — log-odds for the positive/relevant class.
+		// In that case use sigmoid, not softmax.
+		// When numLabels >= 2, use softmax and take class-1 probability.
 		const batchSize = logits.dims[0];
 		const numLabels = logits.dims[logits.dims.length - 1];
 		const elementsPerSample = logits.data.length / batchSize;
@@ -494,19 +490,17 @@ async function rerank(
 		for (let i = 0; i < batchSize; i++) {
 			const start = i * elementsPerSample;
 			const row = logits.data.slice(start, start + numLabels);
-			// Debug: log first batch's raw logits
-			if (i === 0) {
-				process.stderr.write(
-					`[llamaindex] debug reranker row[${i}] raw=(${Array.from(row).map(v => v.toFixed(4)).join(", ")})\n`,
-				);
+
+			if (numLabels === 1) {
+				// Single logit (log-odds for the positive/relevant class) → sigmoid
+				const logit = row[0];
+				const prob = 1 / (1 + Math.exp(-logit));
+				allScores.push(isFinite(prob) ? prob : 0);
+			} else {
+				// Multi-class logits → softmax, take class-1 (relevant) probability
+				const probs = softmax(row);
+				allScores.push(isFinite(probs[1]) ? probs[1] : 0);
 			}
-			const probs = softmax(row);
-			if (i === 0) {
-				process.stderr.write(
-					`[llamaindex] debug reranker probs[${i}]=(${Array.from(probs).map(v => v.toFixed(6)).join(", ")}) class1=${probs[1]}\n`,
-				);
-			}
-			allScores.push(isFinite(probs[1]) ? probs[1] : 0);
 		}
 	}
 
@@ -758,7 +752,6 @@ async function queryIndex(
 		const node = source.node;
 		const meta = node.metadata ?? {};
 		const file = (meta.file as string) || "unknown";
-		process.stderr.write(`[llamaindex] bi-encoder score for ${meta.fileName || "?"}: ${source.score}\n`);
 		return {
 			text: node.getContent(li.MetadataMode.NONE).slice(0, 6000),
 			score: isFinite(source.score) ? source.score : 0,
@@ -1064,8 +1057,7 @@ export default async function (pi: ExtensionAPI) {
 			for (let i = 0; i < results.length; i++) {
 				const r = results[i];
 				const scoreStr = isFinite(r.score) ? (r.score * 100).toFixed(1) : "0.0";
-				const rawStr = isFinite(r.score) ? r.score.toExponential(2) : "N/A";
-				lines.push(`[${i + 1}] ${r.fileName} (score: ${scoreStr}%, raw: ${rawStr})`);
+				lines.push(`[${i + 1}] ${r.fileName} (score: ${scoreStr}%)`);
 				lines.push(`    File: ${r.file}`);
 				if (r.title) lines.push(`    Title: ${r.title}`);
 				if (r.tags) lines.push(`    Tags: ${r.tags}`);
@@ -1374,8 +1366,7 @@ export default async function (pi: ExtensionAPI) {
 			for (let i = 0; i < results.length; i++) {
 				const r = results[i];
 				const scoreStr = isFinite(r.score) ? (r.score * 100).toFixed(1) : "0.0";
-				const rawStr = isFinite(r.score) ? r.score.toExponential(2) : "N/A";
-				md += `### ${i + 1}. ${r.fileName}  —  *${scoreStr}% match*  (raw: ${rawStr})\n\n`;
+				md += `### ${i + 1}. ${r.fileName}  —  *${scoreStr}% match*\n\n`;
 				md += `**File:** \`${r.file}\`\n\n`;
 
 				// Human-friendly view: metadata + description, no code.
