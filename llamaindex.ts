@@ -478,15 +478,24 @@ async function rerank(
 
 		const { logits } = await model(inputs);
 
-		// logits shape: [batch_size, num_labels]
-		// For Xenova/ms-marco-MiniLM-L-12-v2, label 1 is the relevance score.
+		// logits shape: typically [batch_size, num_labels], but some ONNX models
+		// (including Xenova/ms-marco-MiniLM-L-12-v2) output [batch_size, 1, num_labels]
+		// with an extra middle dimension. Always use the LAST dim for numLabels.
+		// For ms-marco-MiniLM-L-12-v2, label 1 is the relevance (positive) class.
+		if (logits.dims.length === 3) {
+			process.stderr.write(
+				`[llamaindex] reranker logits has 3D shape [${logits.dims.join(",")}], using last dim for numLabels\n`,
+			);
+		}
 		const batchSize = logits.dims[0];
-		const numLabels = logits.dims[1];
+		const numLabels = logits.dims[logits.dims.length - 1];
+		const elementsPerSample = logits.data.length / batchSize;
 
 		for (let i = 0; i < batchSize; i++) {
-			const row = logits.data.slice(i * numLabels, (i + 1) * numLabels);
+			const start = i * elementsPerSample;
+			const row = logits.data.slice(start, start + numLabels);
 			const probs = softmax(row);
-			allScores.push(isFinite(probs[1]) ? probs[1] : 0); // index 1 = relevant (positive) class
+			allScores.push(isFinite(probs[1]) ? probs[1] : 0);
 		}
 	}
 
