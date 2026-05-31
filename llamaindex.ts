@@ -244,14 +244,22 @@ function setCache(key: string, value: any) {
 	getCache()[key] = value;
 }
 
-let _index: any = null;
-let _state: IndexState = {
-	indexedPaths: [],
-	indexedAt: null,
-	fileCount: 0,
-	chunkCount: 0,
-	tags: [],
-};
+// _index and _state are stored on globalThis so they survive module reloads
+// by pi's extension system (e.g., /reload between tool calls).
+// Use getIndex()/setIndex() and getState()/setState() everywhere.
+function getIndex(): any { return cached<any | null>("index", null); }
+function setIndex(v: any) { setCache("index", v); }
+function getState(): IndexState {
+	const defaults: IndexState = {
+		indexedPaths: [],
+		indexedAt: null,
+		fileCount: 0,
+		chunkCount: 0,
+		tags: [],
+	};
+	return cached<IndexState>("state", { ...defaults });
+}
+function setState(v: IndexState) { setCache("state", v); }
 
 // ============
 // Storage helpers
@@ -530,7 +538,7 @@ async function ensureLiModules() {
 // ============
 
 async function loadIndex(storageDir: string): Promise<any> {
-	if (_index) return _index;
+	if (getIndex()) return getIndex();
 
 	const persistDir = join(storageDir, "storage");
 	if (!existsSync(persistDir)) return null;
@@ -542,8 +550,8 @@ async function loadIndex(storageDir: string): Promise<any> {
 			storageContext,
 			nodes: [],
 		});
-		_index = index;
-		_state = loadState(storageDir);
+		setIndex(index);
+		setState(loadState(storageDir));
 		return index;
 	} catch (err) {
 		process.stderr.write(
@@ -553,24 +561,32 @@ async function loadIndex(storageDir: string): Promise<any> {
 	}
 }
 
+let _cachedEmbedModel: any = null;
+
 function configureEmbeddings(li: typeof import("llamaindex")) {
 	// Note: Settings.embedModel getter THROWS if not set (it doesn't return
 	// undefined), so we always set it directly without checking first.
 	const key = process.env.OPENAI_API_KEY;
 	try {
 		if (key) {
-			li.Settings.embedModel = new _oaEmbedding({
-				apiKey: key,
-				model: "text-embedding-3-small",
-			});
+			if (!_cachedEmbedModel || _cachedEmbedModel.constructor !== _oaEmbedding) {
+				_cachedEmbedModel = new _oaEmbedding({
+					apiKey: key,
+					model: "text-embedding-3-small",
+				});
+			}
+			li.Settings.embedModel = _cachedEmbedModel;
 		} else {
-			li.Settings.embedModel = new _hfEmbedding({
-				modelType: "BAAI/bge-small-en-v1.5",
-				modelOptions: {
-					quantized: true,
-					dtype: "fp32", // force CPU (no WebGPU/CUDA dependency)
-				},
-			});
+			if (!_cachedEmbedModel || _cachedEmbedModel.constructor !== _hfEmbedding) {
+				_cachedEmbedModel = new _hfEmbedding({
+					modelType: "BAAI/bge-small-en-v1.5",
+					modelOptions: {
+						quantized: true,
+						dtype: "fp32", // force CPU (no WebGPU/CUDA dependency)
+					},
+				});
+			}
+			li.Settings.embedModel = _cachedEmbedModel;
 		}
 	} catch (err) {
 		throw new Error(
@@ -591,7 +607,7 @@ async function buildIndex(
 	configureEmbeddings(li);
 
 	let index = await loadIndex(storageDir);
-	const existingPaths = new Set(_state.indexedPaths);
+	const existingPaths = new Set(getState().indexedPaths);
 
 	// Only process files that aren't already indexed
 	const newFiles = files.filter((fp) => !existingPaths.has(fp));
@@ -637,7 +653,7 @@ async function buildIndex(
 		onProgress?.(i + 1, allDocs.length, fileName);
 	}
 
-	_index = index;
+	setIndex(index);
 
 	// Collect unique tags from all documents' metadata
 	const tagSet = new Set<string>();
@@ -657,14 +673,16 @@ async function buildIndex(
 
 	const isIncremental = index !== null;
 	const mergedPaths = new Set([...existingPaths, ...files]);
-	_state = {
+	const prevState = getState();
+	const newState: IndexState = {
 		indexedPaths: [...mergedPaths],
 		indexedAt: new Date().toISOString(),
 		fileCount: mergedPaths.size,
-		chunkCount: (isIncremental ? _state.chunkCount : 0) + allDocs.length,
-		tags: [...new Set([..._state.tags, ...tagSet])],
+		chunkCount: (isIncremental ? prevState.chunkCount : 0) + allDocs.length,
+		tags: [...new Set([...prevState.tags, ...tagSet])],
 	};
-	saveState(storageDir, _state);
+	setState(newState);
+	saveState(storageDir, newState);
 
 	return { documents: allDocs.length };
 }
@@ -682,7 +700,7 @@ async function queryIndex(
 	// retrieving — the retriever needs them to embed the query text.
 	configureEmbeddings(li);
 
-	let index = _index;
+	let index = getIndex();
 	if (!index) {
 		index = await loadIndex(storageDir);
 		if (!index) return [];
@@ -1142,7 +1160,7 @@ export default async function (pi: ExtensionAPI) {
 
 		if (!indexPath) {
 			// Default: re-index the same directory as the last indexed path
-			const lastPath = _state.indexedPaths[0];
+			const lastPath = getState().indexedPaths[0];
 			indexPath = lastPath ? join(lastPath, "..") : ".";
 		}
 		if (!existsSync(indexPath)) {
@@ -1159,10 +1177,11 @@ export default async function (pi: ExtensionAPI) {
 				rmSync(persistDir, { recursive: true, force: true });
 			}
 			// Reset in-memory state so buildIndex starts fresh
-			_index = null;
-			_state = { indexedPaths: [], indexedAt: null, fileCount: 0, chunkCount: 0, tags: [] };
+			setIndex(null);
+			const emptyState: IndexState = { indexedPaths: [], indexedAt: null, fileCount: 0, chunkCount: 0, tags: [] };
+			setState(emptyState);
 			// Also wipe the state file itself
-			try { writeFileSync(stateFile(storageDir), JSON.stringify(_state)); } catch {}
+			try { writeFileSync(stateFile(storageDir), JSON.stringify(emptyState)); } catch {}
 			ctx.ui.notify("Wiped index. Rebuilding from scratch...", "info");
 		}
 
@@ -1487,7 +1506,7 @@ export default async function (pi: ExtensionAPI) {
 	// ============
 
 	pi.on("session_start", async () => {
-		_index = null;
-		_state = loadState(getStorageDir());
+		setIndex(null);
+		setState(loadState(getStorageDir()));
 	});
 }
