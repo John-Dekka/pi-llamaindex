@@ -413,20 +413,15 @@ function cachedLiModules(): Record<string, any> | null {
 async function ensureReranker(signal?: AbortSignal) {
 	let reranker = cached<{ tokenizer: any; model: any; softmax: Function } | null>("reranker", null);
 	if (!reranker) {
-		const cacheDir = join(homedir(), ".cache", "pi-llamaindex", "transformers");
-		mkdirSync(cacheDir, { recursive: true });
+		// configureTransformersCache() was already called by ensureLiModules()
+		// before ensureReranker is ever invoked, so env.cacheDir and
+		// env.wasm.numThreads are already set correctly.
 
 		const {
-			env,
 			AutoTokenizer,
 			AutoModelForSequenceClassification,
 			softmax,
 		} = await import("@huggingface/transformers");
-
-		// Must set env.cacheDir + thread limit before loading the model so it caches there.
-		env.cacheDir = cacheDir;
-		env.wasm = env.wasm || {};
-		env.wasm.numThreads = 2;
 
 		const modelName = "Xenova/ms-marco-MiniLM-L-12-v2";
 
