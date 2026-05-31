@@ -376,7 +376,7 @@ function cachedLiModules(): Record<string, any> | null {
 // relevance accuracy. The cross-encoder processes query+document pairs
 // through a transformer jointly, which the bi-encoder fundamentally can't.
 
-async function ensureReranker() {
+async function ensureReranker(signal?: AbortSignal) {
 	let reranker = cached<{ tokenizer: any; model: any; softmax: Function } | null>("reranker", null);
 	if (!reranker) {
 		const cacheDir = join(homedir(), ".cache", "pi-llamaindex", "transformers");
@@ -411,10 +411,11 @@ async function ensureReranker() {
 async function rerank(
 	query: string,
 	candidates: QueryResult[],
+	signal?: AbortSignal,
 ): Promise<QueryResult[]> {
 	if (candidates.length === 0) return [];
 
-	const { tokenizer, model, softmax } = await ensureReranker();
+	const { tokenizer, model, softmax } = await ensureReranker(signal);
 
 	// Process candidates in batches of 10 to avoid OOM. The ONNX runtime
 	// allocates memory proportional to batch_size x max_seq_len x hidden_size.
@@ -423,6 +424,9 @@ async function rerank(
 	const allScores: number[] = [];
 
 	for (let offset = 0; offset < candidates.length; offset += BATCH_SIZE) {
+		if (signal?.aborted) {
+			throw new DOMException("Cancelled", "AbortError");
+		}
 		const batch = candidates.slice(offset, offset + BATCH_SIZE);
 
 		const queries = batch.map(() => query);
@@ -639,6 +643,7 @@ async function queryIndex(
 	query: string,
 	topK: number = 10,
 	filterTags?: string[],
+	signal?: AbortSignal,
 ): Promise<QueryResult[]> {
 	const li = await ensureLiModules();
 	const storageDir = getStorageDir();
@@ -701,7 +706,7 @@ async function queryIndex(
 
 	// Stage 2: Re-rank with cross-encoder (slow but much more accurate)
 	try {
-		const reranked = await rerank(query, candidates);
+		const reranked = await rerank(query, candidates, signal);
 
 		// Deduplicate by file — keep the highest-scoring node per file
 		const seen = new Set<string>();
@@ -940,9 +945,12 @@ export default async function (pi: ExtensionAPI) {
 			}
 			return new Text(text, 0, 0);
 		},
-		execute: async (_toolCallId, params) => {
+		execute: async (_toolCallId, params, signal) => {
+			if (signal?.aborted) {
+				return { content: [{ type: "text" as const, text: "Cancelled." }] };
+			}
 			const topK = Math.min(params.limit ?? 5, 20);
-			const results = await queryIndex(params.query, topK, params.tags);
+			const results = await queryIndex(params.query, topK, params.tags, signal);
 
 			if (results.length === 0) {
 				const storageDir = getStorageDir();
@@ -1273,7 +1281,8 @@ export default async function (pi: ExtensionAPI) {
 		);
 
 		try {
-			const results = await queryIndex(queryText, 5, filterTags);
+			if (ctx.signal?.aborted) return;
+			const results = await queryIndex(queryText, 5, filterTags, ctx.signal);
 
 			if (results.length === 0) {
 				const tagMsg =
