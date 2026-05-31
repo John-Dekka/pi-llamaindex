@@ -13,71 +13,94 @@
  */
 
 import { env, pipeline, AutoTokenizer, AutoModelForSequenceClassification } from "@huggingface/transformers";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 const CACHE_DIR = join(homedir(), ".cache", "pi-llamaindex", "transformers");
 
-async function downloadEmbedding() {
-  env.cacheDir = CACHE_DIR;
+const MODELS = [
+  {
+    id: "BAAI/bge-small-en-v1.5",
+    label: "embedding",
+    load: async () => {
+      const extractor = await pipeline("feature-extraction", "BAAI/bge-small-en-v1.5", {
+        quantized: true,
+        dtype: "fp32",
+      });
+      await extractor("warmup", { pooling: "mean", normalize: true });
+    },
+  },
+  {
+    id: "Xenova/bge-reranker-base",
+    label: "reranker",
+    load: async () => {
+      const tokenizer = await AutoTokenizer.from_pretrained("Xenova/bge-reranker-base");
+      const model = await AutoModelForSequenceClassification.from_pretrained(
+        "Xenova/bge-reranker-base",
+        { quantized: true, dtype: "fp32" },
+      );
+      const inputs = await tokenizer("warmup query", {
+        text_pair: "warmup document text",
+      });
+      await model(inputs);
+    },
+  },
+];
 
-  process.stderr.write(
-    `\r\x1b[2K[llamaindex] Downloading embedding model BAAI/bge-small-en-v1.5 …\n`
-  );
-
-  const extractor = await pipeline("feature-extraction", "BAAI/bge-small-en-v1.5", {
-    quantized: true,
-    dtype: "fp32",
-  });
-
-  // Warm up
-  await extractor("warmup", { pooling: "mean", normalize: true });
-
-  process.stderr.write(
-    `\r\x1b[2K[llamaindex] ✓ Embedding model cached\n`
-  );
+function isCached(modelId) {
+  return existsSync(join(CACHE_DIR, modelId, "config.json"));
 }
 
-async function downloadReranker() {
-  // The cross-encoder uses AutoModelForSequenceClassification directly
-  // (not the pipeline), so we load it the same way the extension does.
+async function ensureModel(model) {
+  if (isCached(model.id)) {
+    return false; // already cached, nothing downloaded
+  }
 
   process.stderr.write(
-    `\r\x1b[2K[llamaindex] Downloading reranker model Xenova/bge-reranker-base …\n`
+    `\r\x1b[2K[llamaindex] Downloading ${model.label} model ${model.id} …\n`,
   );
 
-  const tokenizer = await AutoTokenizer.from_pretrained("Xenova/bge-reranker-base");
-  const model = await AutoModelForSequenceClassification.from_pretrained(
-    "Xenova/bge-reranker-base",
-    { quantized: true, dtype: "fp32" },
-  );
-
-  // Warm up — run a single pair through the model
-  const inputs = await tokenizer("warmup query", {
-    text_pair: "warmup document text",
-  });
-  await model(inputs);
+  env.cacheDir = CACHE_DIR;
+  await model.load();
 
   process.stderr.write(
-    `\r\x1b[2K[llamaindex] ✓ Reranker model cached\n`
+    `\r\x1b[2K[llamaindex] ✓ ${model.label} model cached\n`,
   );
+  return true;
 }
 
 async function main() {
   mkdirSync(CACHE_DIR, { recursive: true });
 
-  await downloadEmbedding();
-  await downloadReranker();
+  // Clean stale cache from old model (BAAI/bge-reranker-v2-m3 had no ONNX)
+  const staleDir = join(CACHE_DIR, "BAAI", "bge-reranker-v2-m3");
+  if (existsSync(staleDir)) {
+    await import("node:fs/promises").then((fs) =>
+      fs.rm(staleDir, { recursive: true, force: true }),
+    );
+  }
 
-  process.stderr.write(
-    `\r\x1b[2K[llamaindex] ✓ All models cached at ${CACHE_DIR}\n`
-  );
+  const downloaded = [];
+  for (const model of MODELS) {
+    const didDownload = await ensureModel(model);
+    if (didDownload) downloaded.push(model.label);
+  }
+
+  if (downloaded.length === 0) {
+    process.stderr.write(
+      `\r\x1b[2K[llamaindex] ✓ All models already cached at ${CACHE_DIR}\n`,
+    );
+  } else {
+    process.stderr.write(
+      `\r\x1b[2K[llamaindex] ✓ Models cached at ${CACHE_DIR} (${downloaded.join(", ")})\n`,
+    );
+  }
 }
 
 main().catch((err) => {
   process.stderr.write(
     `\r\x1b[2K[llamaindex] ⚠ Could not pre-download models: ${err.message}\n` +
-      `  Models will be downloaded on first use instead.\n`
+      `  Models will be downloaded on first use instead.\n`,
   );
 });
