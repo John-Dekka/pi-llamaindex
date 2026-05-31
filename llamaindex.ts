@@ -210,6 +210,8 @@ interface QueryResult {
 	category?: string;
 	tags?: string;
 	description?: string;
+	/** Debug info about score source, only populated when score is 0 */
+	debugScore?: string;
 }
 
 // ============
@@ -775,13 +777,6 @@ async function queryIndex(
 	try {
 		const reranked = await rerank(query, candidates, signal);
 
-		// Debug: log first few reranker scores
-		for (let i = 0; i < Math.min(reranked.length, 3); i++) {
-			process.stderr.write(
-				`[llamaindex] debug reranker[${i}] score=${reranked[i].score} raw=${reranked[i].score} file=${reranked[i].fileName}\n`,
-			);
-		}
-
 		// Deduplicate by file — keep the highest-scoring node per file
 		const seen = new Set<string>();
 		const deduped: QueryResult[] = [];
@@ -798,12 +793,6 @@ async function queryIndex(
 			`\r\x1b[2K[llamaindex] Reranker failed, using bi-encoder scores: ${(err as Error).message}\n`,
 		);
 		const sorted = [...candidates].sort((a, b) => b.score - a.score);
-		// Debug: log bi-encoder fallback scores
-		for (let i = 0; i < Math.min(sorted.length, 3); i++) {
-			process.stderr.write(
-				`[llamaindex] debug bi-encoder[${i}] score=${sorted[i].score} file=${sorted[i].fileName}\n`,
-			);
-		}
 		const seen = new Set<string>();
 		const deduped: QueryResult[] = [];
 		for (const r of sorted) {
@@ -1075,7 +1064,8 @@ export default async function (pi: ExtensionAPI) {
 			for (let i = 0; i < results.length; i++) {
 				const r = results[i];
 				const scoreStr = isFinite(r.score) ? (r.score * 100).toFixed(1) : "0.0";
-				lines.push(`[${i + 1}] ${r.fileName} (score: ${scoreStr}%)`);
+				const rawStr = isFinite(r.score) ? r.score.toExponential(2) : "N/A";
+				lines.push(`[${i + 1}] ${r.fileName} (score: ${scoreStr}%, raw: ${rawStr})`);
 				lines.push(`    File: ${r.file}`);
 				if (r.title) lines.push(`    Title: ${r.title}`);
 				if (r.tags) lines.push(`    Tags: ${r.tags}`);
@@ -1384,7 +1374,8 @@ export default async function (pi: ExtensionAPI) {
 			for (let i = 0; i < results.length; i++) {
 				const r = results[i];
 				const scoreStr = isFinite(r.score) ? (r.score * 100).toFixed(1) : "0.0";
-				md += `### ${i + 1}. ${r.fileName}  —  *${scoreStr}% match*\n\n`;
+				const rawStr = isFinite(r.score) ? r.score.toExponential(2) : "N/A";
+				md += `### ${i + 1}. ${r.fileName}  —  *${scoreStr}% match*  (raw: ${rawStr})\n\n`;
 				md += `**File:** \`${r.file}\`\n\n`;
 
 				// Human-friendly view: metadata + description, no code.
