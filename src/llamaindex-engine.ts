@@ -420,6 +420,7 @@ export async function queryIndex(
 	if (!nodes || nodes.length === 0) return [];
 
 	// Post-filter by tags if requested (check metadata tags field)
+	// Uses AND logic: only chunks matching ALL specified tags are returned.
 	if (filterTags && filterTags.length > 0) {
 		const lowerTags = filterTags.map((t) => t.toLowerCase());
 		nodes = nodes.filter((source) => {
@@ -429,7 +430,7 @@ export async function queryIndex(
 			const metaTags = Array.isArray(rawTags)
 				? (rawTags as string[]).join(", ")
 				: (rawTags as string) || "";
-			return lowerTags.some((t) =>
+			return lowerTags.every((t) =>
 				metaTags
 					.toLowerCase()
 					.split(/\s*,\s*/)

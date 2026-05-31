@@ -11,6 +11,7 @@
     "llamaindex": "^0.12.1",
     "@llamaindex/huggingface": "^0.1.0",
     "@llamaindex/openai": "^0.1.0",
+    "@huggingface/transformers": "^3.5.0",
     "@sinclair/typebox": "^0.34.49",
     "js-yaml": "^4.1.0"
   },
