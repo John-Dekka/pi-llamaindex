@@ -365,6 +365,7 @@ async function ensureReranker() {
 
 		// Must set env.cacheDir + thread limit before loading the model so it caches there.
 		env.cacheDir = cacheDir;
+		env.wasm = env.wasm || {};
 		env.wasm.numThreads = 2;
 
 		const modelName = "Xenova/bge-reranker-base";
@@ -434,6 +435,7 @@ async function configureTransformersCache() {
 	try {
 		const { env } = await import("@huggingface/transformers");
 		env.cacheDir = cacheDir;
+		env.wasm = env.wasm || {};
 		env.wasm.numThreads = 2;
 	} catch {
 		// @huggingface/transformers may not be loaded yet, that's ok —
