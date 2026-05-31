@@ -27,6 +27,7 @@ import { BOLD, CYAN, DIM, GREEN, RST, progressBar, UI_WIDGET_KEY } from "./ui.js
 import {
 	DEFAULT_TOP_K,
 	MAX_TOP_K,
+	MAX_COMMAND_TOP_K,
 	MAX_PREVIEW_LENGTH,
 	MAX_DESCRIPTION_SNIPPET,
 	MAX_DESCRIPTION_PREVIEW,
@@ -436,19 +437,20 @@ export default async function (pi: ExtensionAPI) {
 	async function cmdQuery(query: string, ctx: ExtensionCommandContext) {
 		if (!query) {
 			ctx.ui.notify(
-				"Usage: /li query <text> [--tag <tag> ...]",
+				"Usage: /li query <text> [<limit>] [--tag <tag> ...]",
 				"warning",
 			);
 			return;
 		}
 
-		// Parse --tag <value> flags from the query string.
+		// Parse --tag <value> flags and an optional trailing limit number.
 		// We split into tokens properly so "my --tag thing" doesn't match
 		// a literal "--tag" inside the query text — only `--tag` as its
 		// own whitespace-delimited token is treated as a filter flag.
 		const tokens = query.trim().split(/\s+/);
 		const filterTags: string[] = [];
 		const queryTokens: string[] = [];
+		let limit = DEFAULT_TOP_K;
 		let i = 0;
 		while (i < tokens.length) {
 			if (tokens[i] === "--tag" && i + 1 < tokens.length) {
@@ -459,11 +461,23 @@ export default async function (pi: ExtensionAPI) {
 				i++;
 			}
 		}
+
+		// Check if the last token is a standalone number (limit override).
+		// Must be after --tag parsing so "foo --tag bar 10" still works.
+		if (queryTokens.length >= 2) {
+			const last = queryTokens[queryTokens.length - 1];
+			const parsed = parseInt(last, 10);
+			if (!Number.isNaN(parsed) && parsed >= 1 && parsed <= MAX_COMMAND_TOP_K) {
+				limit = parsed;
+				queryTokens.pop(); // remove the number from the query
+			}
+		}
+
 		const queryText = queryTokens.join(" ");
 
 		if (!queryText) {
 			ctx.ui.notify(
-				"Usage: /li query <text> [--tag <tag> ...]",
+				"Usage: /li query <text> [<limit>] [--tag <tag> ...]",
 				"warning",
 			);
 			return;
@@ -481,7 +495,9 @@ export default async function (pi: ExtensionAPI) {
 		}
 
 		const filterDesc =
-			filterTags.length > 0 ? ` (filter: tags ${filterTags.join(", ")})` : "";
+			filterTags.length > 0
+				? ` (filter: tags ${filterTags.join(", ")}, limit: ${limit})`
+				: ` (limit: ${limit})`;
 		ctx.ui.notify(
 			`Querying LlamaIndex for: "${queryText}"${filterDesc}…`,
 			"info",
@@ -489,7 +505,7 @@ export default async function (pi: ExtensionAPI) {
 
 		try {
 			if (ctx.signal?.aborted) return;
-			const results = await queryIndex(queryText, DEFAULT_TOP_K, filterTags, ctx.signal);
+			const results = await queryIndex(queryText, limit, filterTags, ctx.signal);
 
 			if (results.length === 0) {
 				const tagMsg =

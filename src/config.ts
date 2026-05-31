@@ -34,6 +34,9 @@ export const DEFAULT_TOP_K = 5;
 /** Maximum results the tool will ever return */
 export const MAX_TOP_K = 20;
 
+/** Maximum results the /li query command accepts (user can set 1–50) */
+export const MAX_COMMAND_TOP_K = 50;
+
 /** Maximum characters of chunk text passed to the reranker */
 export const MAX_CHUNK_LENGTH = 6000;
 

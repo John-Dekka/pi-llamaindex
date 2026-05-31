@@ -15,12 +15,14 @@ No API key needed. The extension uses local HuggingFace embeddings out of the bo
 ### Basic usage
 
 ```
-/li index ~/my-docs                     # Index a directory
-/li rebuild ~/my-docs                   # Wipe and rebuild from scratch
-/li query "bullet patterns"              # Query the index
-/li query "collision" --tag tile-collision  # Query filtered by tag
-/li tags                                # List all unique tags
-/li status                              # Show stats
+/li index ~/my-docs                           # Index a directory
+/li rebuild ~/my-docs                         # Wipe and rebuild from scratch
+/li query "bullet patterns"                    # Query the index (default: 5 results)
+/li query "collision" 10                       # Query with custom result count (1–50)
+/li query "collision" --tag tile-collision     # Query filtered by tag
+/li query "collision" 10 --tag tile-collision  # Query with custom count + tag filter
+/li tags                                      # List all unique tags
+/li status                                    # Show stats
 ```
 
 ## What It Is
@@ -41,7 +43,7 @@ Using LlamaIndex RAG is straightforward:
 The extension uses a **two-stage retrieval pipeline** for maximum relevance:
 
 1. **Stage 1 — Bi-encoder retrieval** — `BAAI/bge-small-en-v1.5` (130MB) embeds the query and finds the top 20 most similar documents from the vector index. Fast, broad, catches everything remotely relevant.
-2. **Stage 2 — Cross-encoder reranking** — `Xenova/ms-marco-MiniLM-L-12-v2` (~87MB quantized) processes each candidate as a query+document pair through a transformer, producing a far more accurate relevance score. The top 20 are reranked in batches of 10 and only the best 5 are returned.
+2. **Stage 2 — Cross-encoder reranking** — `Xenova/ms-marco-MiniLM-L-12-v2` (~87MB quantized) processes each candidate as a query+document pair through a transformer, producing a far more accurate relevance score. The top 20 are reranked in batches of 10 and the best results are returned (default 5, adjustable up to 50 via `/li query <text> <limit>`).
 
 The bi-encoder embeds query and documents independently — it's fast but shallow. The cross-encoder reads them *together*, understanding nuanced relevance that vector similarity alone misses. This is especially powerful for code-heavy documents where function signatures, implementation details, and usage context need to be weighed holistically.
 
@@ -60,8 +62,8 @@ Other automatic features:
 | `/li index <path>` | Index a file or directory (supports `.md`, `.yaml`, `.yml`) |
 | `/li index <path> --rebuild` | Wipe the index and rebuild from scratch |
 | `/li rebuild <path>` | Alias for `/li index <path> --rebuild` |
-| `/li query <text>` | Query the index — shows **metadata + description** for each result (human-friendly) |
-| `/li query <text> --tag <tag> [--tag ...]` | Query filtered by one or more tags (AND logic) |
+| `/li query <text> [<limit>]` | Query the index — shows **metadata + description** for each result (human-friendly, default: 5 results) |
+| `/li query <text> [<limit>] --tag <tag> [--tag ...]` | Query filtered by one or more tags (AND logic), optional result count (1–50) |
 | `/li tags` | List all unique tags extracted from indexed YAML frontmatter |
 | `/li status` | Show index statistics and configuration |
 
@@ -73,8 +75,8 @@ Other automatic features:
 | `li_tags()` | List all unique tags from indexed documents. Useful for discovering available tags before filtering |
 
 > **Result format:**
-> - `/li query` — top 5 results, each showing title, file, tags/category, and first ~400 chars of description (no code)
-> - `li_query()` — top 5 results, each with the complete file content (up to 6000 chars) including code and gotchas
+> - `/li query` — top results (default 5, adjustable via `/li query <text> <limit>`), each showing title, file, tags/category, and first ~400 chars of description (no code)
+> - `li_query()` — top results (default 5, max 20), each with the complete file content (up to 6000 chars) including code and gotchas
 
 ### YAML Frontmatter
 
