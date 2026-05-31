@@ -39,7 +39,7 @@ Using LlamaIndex RAG is straightforward:
 
 The extension uses a **two-stage retrieval pipeline** for maximum relevance:
 
-1. **Stage 1 — Bi-encoder retrieval** — `BAAI/bge-small-en-v1.5` (130MB) embeds the query and finds the top 60 most similar documents from the vector index. Fast, broad, catches everything remotely relevant.
+1. **Stage 1 — Bi-encoder retrieval** — `BAAI/bge-small-en-v1.5` (130MB) embeds the query and finds the top 20 most similar documents from the vector index. Fast, broad, catches everything remotely relevant.
 2. **Stage 2 — Cross-encoder reranking** — `Xenova/ms-marco-MiniLM-L-12-v2` (~87MB quantized) processes each candidate as a query+document pair through a transformer, producing a far more accurate relevance score. The top 20 are reranked in batches of 10 and only the best 5 are returned.
 
 The bi-encoder embeds query and documents independently — it's fast but shallow. The cross-encoder reads them *together*, understanding nuanced relevance that vector similarity alone misses. This is especially powerful for code-heavy documents where function signatures, implementation details, and usage context need to be weighed holistically.
@@ -47,7 +47,7 @@ The bi-encoder embeds query and documents independently — it's fast but shallo
 Other automatic features:
 
 - **Falls back to OpenAI** — If `OPENAI_API_KEY` is set, it uses `text-embedding-3-small` for higher-quality embeddings
-- **Extracts YAML frontmatter** — Parses `title`, `category`, `tags`, and any custom fields from `---` delimited blocks in `.yaml`/`.yml` files
+- **Extracts YAML frontmatter** — Parses `title`, `category`, `tags`, and any custom fields from `---` delimited blocks in `.yaml`/`.yml`/`.md`/`.mdx` files
 - **Indexes incrementally** — Only new or changed files get embedded. Existing index data stays untouched
 - **Filters by tag** — Pass `--tag <name>` to narrow results to documents with matching tags
 - **Pre-downloads models at install time** — Both models are cached to `~/.cache/pi-llamaindex/transformers/` during `npm install` so first use is instant. If you delete `node_modules/`, just re-run `npm install` to restore them
@@ -58,6 +58,7 @@ Other automatic features:
 |---------|-------------|
 | `/li index <path>` | Index a file or directory (supports `.md`, `.yaml`, `.yml`) |
 | `/li index <path> --rebuild` | Wipe the index and rebuild from scratch |
+| `/li rebuild <path>` | Alias for `/li index <path> --rebuild` |
 | `/li query <text>` | Query the index — shows **metadata + description** for each result (human-friendly) |
 | `/li query <text> --tag <tag> [--tag ...]` | Query filtered by one or more tags (AND logic) |
 | `/li tags` | List all unique tags extracted from indexed YAML frontmatter |
@@ -125,7 +126,7 @@ Index a 500-file directory the first time and it takes a while. Index it again �
 
 ### Models Survive Reinstalls
 
-Both the embedding model (130MB) and the reranker (560MB quantized) are cached to `~/.cache/pi-llamaindex/transformers/`, not inside `node_modules/`. Delete `node_modules/`, reinstall, and the models are still there. The `postinstall` script pre-downloads both so first use is instant.
+Both the embedding model (130MB) and the reranker (~87MB quantized) are cached to `~/.cache/pi-llamaindex/transformers/`, not inside `node_modules/`. Delete `node_modules/`, reinstall, and the models are still there. The `postinstall` script pre-downloads both so first use is instant.
 
 ### You Own Your Data
 
