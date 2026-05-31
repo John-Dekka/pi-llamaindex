@@ -32,12 +32,12 @@ const MODELS = [
     },
   },
   {
-    id: "Xenova/bge-reranker-base",
+    id: "Xenova/ms-marco-MiniLM-L-12-v2",
     label: "reranker",
     load: async () => {
-      const tokenizer = await AutoTokenizer.from_pretrained("Xenova/bge-reranker-base");
+      const tokenizer = await AutoTokenizer.from_pretrained("Xenova/ms-marco-MiniLM-L-12-v2");
       const model = await AutoModelForSequenceClassification.from_pretrained(
-        "Xenova/bge-reranker-base",
+        "Xenova/ms-marco-MiniLM-L-12-v2",
         { quantized: true, dtype: "fp32" },
       );
       const inputs = await tokenizer("warmup query", {
@@ -73,12 +73,17 @@ async function ensureModel(model) {
 async function main() {
   mkdirSync(CACHE_DIR, { recursive: true });
 
-  // Clean stale cache from old model (BAAI/bge-reranker-v2-m3 had no ONNX)
-  const staleDir = join(CACHE_DIR, "BAAI", "bge-reranker-v2-m3");
-  if (existsSync(staleDir)) {
-    await import("node:fs/promises").then((fs) =>
-      fs.rm(staleDir, { recursive: true, force: true }),
-    );
+  // Clean stale cache from old models (switched to lighter MiniLM)
+  for (const stale of [
+    ["BAAI", "bge-reranker-v2-m3"],   // had no ONNX
+    ["Xenova", "bge-reranker-base"],  // replaced by MiniLM-L-12-v2
+  ]) {
+    const staleDir = join(CACHE_DIR, ...stale);
+    if (existsSync(staleDir)) {
+      await import("node:fs/promises").then((fs) =>
+        fs.rm(staleDir, { recursive: true, force: true }),
+      );
+    }
   }
 
   const downloaded = [];

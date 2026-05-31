@@ -371,7 +371,7 @@ function cachedLiModules(): Record<string, any> | null {
 // ============
 
 // After retrieving candidates via the bi-encoder (bge-small-en-v1.5), we
-// re-rank them with a cross-encoder (Xenova/bge-reranker-base) for much better
+// re-rank them with a cross-encoder (Xenova/ms-marco-MiniLM-L-12-v2) for much better
 // relevance accuracy. The cross-encoder processes query+document pairs
 // through a transformer jointly, which the bi-encoder fundamentally can't.
 
@@ -393,7 +393,7 @@ async function ensureReranker() {
 		env.wasm = env.wasm || {};
 		env.wasm.numThreads = 2;
 
-		const modelName = "Xenova/bge-reranker-base";
+		const modelName = "Xenova/ms-marco-MiniLM-L-12-v2";
 
 		const tokenizer = await AutoTokenizer.from_pretrained(modelName);
 		const model = await AutoModelForSequenceClassification.from_pretrained(
@@ -436,14 +436,14 @@ async function rerank(
 		const { logits } = await model(inputs);
 
 		// logits shape: [batch_size, num_labels]
-		// For Xenova/bge-reranker-base, label 1 is the relevance score.
+		// For Xenova/ms-marco-MiniLM-L-12-v2, label 1 is the relevance score.
 		const batchSize = logits.dims[0];
 		const numLabels = logits.dims[1];
 
 		for (let i = 0; i < batchSize; i++) {
 			const row = logits.data.slice(i * numLabels, (i + 1) * numLabels);
 			const probs = softmax(row);
-			allScores.push(probs[1]); // index 1 = relevant (positive) class
+			allScores.push(isFinite(probs[1]) ? probs[1] : 0); // index 1 = relevant (positive) class
 		}
 	}
 
@@ -686,7 +686,7 @@ async function queryIndex(
 		const file = (meta.file as string) || "unknown";
 		return {
 			text: node.getContent(li.MetadataMode.NONE).slice(0, 6000),
-			score: source.score ?? 0,
+			score: isFinite(source.score) ? source.score : 0,
 			file,
 			fileName: (meta.fileName as string) || basename(file),
 			title: (meta.title as string) || undefined,
@@ -943,7 +943,7 @@ export default async function (pi: ExtensionAPI) {
 			];
 			for (let i = 0; i < results.length; i++) {
 				const r = results[i];
-				const scoreStr = (r.score * 100).toFixed(1);
+				const scoreStr = isFinite(r.score) ? (r.score * 100).toFixed(1) : "0.0";
 				lines.push(`[${i + 1}] ${r.fileName} (score: ${scoreStr}%)`);
 				lines.push(`    File: ${r.file}`);
 				if (r.title) lines.push(`    Title: ${r.title}`);
@@ -1266,7 +1266,7 @@ export default async function (pi: ExtensionAPI) {
 
 			for (let i = 0; i < results.length; i++) {
 				const r = results[i];
-				const scoreStr = (r.score * 100).toFixed(1);
+				const scoreStr = isFinite(r.score) ? (r.score * 100).toFixed(1) : "0.0";
 				md += `### ${i + 1}. ${r.fileName}  —  *${scoreStr}% match*\n\n`;
 				md += `**File:** \`${r.file}\`\n\n`;
 
