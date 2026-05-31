@@ -35,6 +35,7 @@ import {
 	MAX_QUERY_LENGTH,
 	LOCAL_EMBED_MODEL,
 	OPENAI_EMBED_MODEL,
+	INDEX_BATCH_SIZE,
 } from "./config.js";
 
 // ============
@@ -230,80 +231,99 @@ export async function buildIndex(
 		return { documents: 0, failed: 0 };
 	}
 
-	// Phase 1: Read files and parse into documents (fast)
-	const allDocs: any[] = [];
-	let failedCount = 0;
-
-	for (let i = 0; i < newFiles.length; i++) {
-		if (signal?.aborted) return { documents: 0, failed: 0 };
-		const fp = newFiles[i];
-		const name = basename(fp);
-		try {
-			const docs = fileToDocuments(fp, li);
-			allDocs.push(...docs);
-		} catch (err) {
-			process.stderr.write(
-				`\r\x1b[2K[${i + 1}/${newFiles.length}] ERROR ${name}: ${(err as Error).message}\n`,
-			);
-			failedCount++;
-		}
-	}
-
-	if (allDocs.length === 0) {
-		return { documents: 0, failed: failedCount };
-	}
-
-	// Phase 2: Ensure an index exists, then insert documents one-by-one
-	// with real progress tracking — the embedding + storage is the slow part.
+	// Ensure an index exists before inserting documents
 	if (!index) {
 		const storageContext = await li.storageContextFromDefaults({ persistDir });
 		index = await li.VectorStoreIndex.init({ storageContext, nodes: [] });
 	}
 
-	for (let i = 0; i < allDocs.length; i++) {
-		if (signal?.aborted) return { documents: 0, failed: 0 };
-		const doc = allDocs[i];
-		const fileName =
-			(doc.metadata as Record<string, unknown>)?.fileName as string ||
-			`doc ${i + 1}`;
-		await index.insert(doc);
-		onProgress?.(i + 1, allDocs.length, fileName);
+	// Process files in batches to avoid holding all documents in memory.
+	// Phase 1: Read/parse → Phase 2: Embed/insert, repeated per batch.
+	// Progress is reported at the document level for fine-grained UX.
+	let totalInserted = 0;
+	let failedCount = 0;
+	let totalDocs = 0;
+	let docsThisBatch = 0;
+	const allTags = new Set(getState().tags);
+
+	// First pass: count total documents (fast — no ONNX yet)
+	for (const fp of newFiles) {
+		try {
+			const docs = fileToDocuments(fp, li);
+			totalDocs += docs.length;
+		} catch {
+			// will be counted as failed in the main pass
+		}
+	}
+
+	for (let batchStart = 0; batchStart < newFiles.length; batchStart += INDEX_BATCH_SIZE) {
+		if (signal?.aborted) return { documents: totalInserted, failed: failedCount };
+
+		const batchFiles = newFiles.slice(batchStart, batchStart + INDEX_BATCH_SIZE);
+
+		// Phase 1: Read and parse files into documents (fast, CPU-bound)
+		const batchDocs: any[] = [];
+		for (let i = 0; i < batchFiles.length; i++) {
+			if (signal?.aborted) return { documents: totalInserted, failed: failedCount };
+			const fp = batchFiles[i];
+			const name = basename(fp);
+			try {
+				const docs = fileToDocuments(fp, li);
+				batchDocs.push(...docs);
+			} catch (err) {
+				process.stderr.write(
+					`\r\x1b[2K[${batchStart + i + 1}/${newFiles.length}] ERROR ${name}: ${(err as Error).message}\n`,
+				);
+				failedCount++;
+			}
+		}
+
+		if (batchDocs.length === 0) continue;
+
+		docsThisBatch = batchDocs.length;
+
+		// Phase 2: Insert documents one-by-one with progress tracking.
+		// The embedding + storage is the slow part — progress bar drives UX.
+		for (let i = 0; i < docsThisBatch; i++) {
+			if (signal?.aborted) return { documents: totalInserted, failed: failedCount };
+			const doc = batchDocs[i];
+			const globalIdx = totalInserted + i + 1;
+			const fileName =
+				(doc.metadata as Record<string, unknown>)?.fileName as string ||
+				`doc ${globalIdx}`;
+			await index.insert(doc);
+			onProgress?.(globalIdx, totalDocs || docsThisBatch, fileName);
+		}
+
+		totalInserted += docsThisBatch;
+
+		// Collect tags from this batch's documents
+		for (const doc of batchDocs) {
+			const rawTags = (doc.metadata as Record<string, unknown>)?.tags;
+			const parsed = parseTags(rawTags);
+			for (const t of parsed) {
+				allTags.add(t);
+			}
+		}
 	}
 
 	setIndex(index);
-
-	// Collect unique tags from all documents' metadata
-	const prevState = getState();
-	const tagSet = parseTagsFromDocs(allDocs, prevState);
 
 	const mergedPaths = new Set([...existingPaths, ...files]);
 	const newState: IndexState = {
 		indexedPaths: [...mergedPaths],
 		indexedAt: new Date().toISOString(),
 		fileCount: mergedPaths.size,
-		chunkCount: prevState.chunkCount + allDocs.length,
-		tags: tagSet,
+		chunkCount: getState().chunkCount + totalInserted,
+		tags: [...allTags],
 	};
 	setState(newState);
 	saveState(storageDir, newState);
 
-	return { documents: allDocs.length, failed: failedCount };
+	return { documents: totalInserted, failed: failedCount };
 }
 
-/**
- * Parse all unique tags from documents' metadata, merging with existing state.
- */
-function parseTagsFromDocs(docs: any[], prevState: IndexState): string[] {
-	const tagSet = new Set(prevState.tags);
-	for (const doc of docs) {
-		const rawTags = (doc.metadata as Record<string, unknown>)?.tags;
-		const parsed = parseTags(rawTags);
-		for (const t of parsed) {
-			tagSet.add(t);
-		}
-	}
-	return [...tagSet];
-}
+
 
 // ============
 // Querying
