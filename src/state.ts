@@ -119,6 +119,12 @@ export function getStorageDir(): string {
 	return piDir;
 }
 
+/**
+ * Resolve the path to the state.json file within a storage directory.
+ *
+ * @param storageDir - The storage directory (must exist or be creatable by saveState).
+ * @returns Absolute path to the state file.
+ */
 export function stateFile(storageDir: string): string {
 	return join(storageDir, "state.json");
 }

@@ -42,8 +42,8 @@ It indexes YAML frontmatter files and Markdown documents using [LlamaIndex.TS](h
 
 The extension uses a **two-stage retrieval pipeline** for maximum relevance:
 
-1. **Stage 1 — Bi-encoder retrieval** — `BAAI/bge-small-en-v1.5` (130MB) embeds the query and finds the top 20 most similar documents from the vector index. Fast, broad, catches everything remotely relevant.
-2. **Stage 2 — Cross-encoder reranking** — `Xenova/ms-marco-MiniLM-L-12-v2` (~87MB quantized) processes each candidate as a query+document *pair* through a transformer, producing far more accurate relevance scores. The top 20 are reranked in batches of 10 and the best results are returned (default 5, adjustable up to 50).
+1. **Stage 1 — Bi-encoder retrieval** — `BAAI/bge-small-en-v1.5` (130MB) embeds the query and finds the top 25 most similar documents from the vector index. Fast, broad, catches everything remotely relevant.
+2. **Stage 2 — Cross-encoder reranking** — `Xenova/ms-marco-MiniLM-L-12-v2` (~87MB quantized) processes each candidate as a query+document *pair* through a transformer, producing far more accurate relevance scores. The top 25 are reranked in batches of 10 and the best results are returned (default 5, adjustable up to 50).
 
 The bi-encoder embeds query and documents independently — fast but shallow. The cross-encoder reads them *together*, understanding nuanced relevance that vector similarity alone misses. This is especially powerful for code-heavy documents where function signatures, implementation details, and usage context need to be weighed holistically.
 

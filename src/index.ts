@@ -43,7 +43,9 @@ export { buildIndex, getStorageDir, collectFiles };
 // ============
 
 export default async function (pi: ExtensionAPI) {
-	// Load debug infrastructure and set ONNX thread limits
+	// Load debug infrastructure and set ONNX thread limits.
+	// Note: ESM requires the .js extension even though the source is .ts
+	// (jiti resolves it transparently).
 	await import("./debug.js");
 
 	const LI_SUBCOMMANDS: { value: string; label: string; description: string }[] = [

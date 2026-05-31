@@ -22,8 +22,9 @@ export const ALLOWED_EXTENSIONS = new Set([".yaml", ".yml", ".md", ".mdx"]);
 // Retrieval pipeline
 // ============
 
-/** Number of candidates retrieved by the bi-encoder before reranking */
-export const RETRIEVER_TOP_K = 20;
+/** Number of candidates retrieved by the bi-encoder before reranking.
+ *  Set slightly above MAX_TOP_K so deduplication has room to work. */
+export const RETRIEVER_TOP_K = 25;
 
 /** Batch size for cross-encoder reranking (memory/CPU bound) */
 export const RERANKER_BATCH_SIZE = 10;
@@ -69,8 +70,11 @@ export const WASM_NUM_THREADS = 2;
 // Global state
 // ============
 
-/** Symbol key on globalThis for extension state (guaranteed unique across packages) */
-export const GLOBAL_STATE_KEY = Symbol.for("pi-llamaindex");
+/** Symbol key on globalThis for extension state (guaranteed unique across packages).
+ *  Version-stamped to prevent stale state from a previous extension version
+ *  being reused after an update. Bump the version string when the shape of
+ *  global state (GlobalStore interface) changes incompatibly. */
+export const GLOBAL_STATE_KEY = Symbol.for("pi-llamaindex:v0.2.0");
 
 // ============
 // Builder
