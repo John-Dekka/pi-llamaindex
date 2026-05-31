@@ -90,42 +90,76 @@ if (process.env.PI_LLAMAINDEX_DEBUG) {
 		return s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
 	}
 
+	// Helper: should we suppress this "already imported" spam?
+	function isSuppressedMessage(args: any[]): boolean {
+		return (
+			typeof args[0] === "string" &&
+			args[0].includes("llamaindex was already imported")
+		);
+	}
+
 	// Tee stderr writes to the log file
 	const __origStderrWrite = process.stderr.write.bind(process.stderr);
 	process.stderr.write = ((chunk: any, ...args: any[]) => {
-		ensureLogStream().then((stream) => {
-			const timestamp = new Date().toISOString();
-			const msg = typeof chunk === "string" ? chunk : chunk.toString();
-			stream.write(`[${timestamp}] ${stripAnsi(msg)}`);
-		}).catch(() => {});
+		ensureLogStream()
+			.then((stream) => {
+				const timestamp = new Date().toISOString();
+				const msg = typeof chunk === "string" ? chunk : chunk.toString();
+				stream.write(`[${timestamp}] ${stripAnsi(msg)}`);
+			})
+			.catch((err) => {
+				// Write log-stream errors to original stderr so they're not silently lost
+				__origStderrWrite(`[llamaindex] debug-log error: ${err.message}\n`);
+			});
 		return __origStderrWrite(chunk, ...args);
 	}) as typeof process.stderr.write;
 
-	// Also capture console methods
+	// Also capture console methods. All three use the same pattern:
+	//   async write to log → synchronous call to original
+	// This ensures consistent ordering and avoids the suppressed
+	// "was already imported" noise from leaking into the log file.
 	const __origConsoleLog = console.log.bind(console);
 	console.log = (...args: any[]) => {
-		ensureLogStream().then((stream) => {
-			const timestamp = new Date().toISOString();
-			stream.write(`[${timestamp}] [log] ${args.map(String).join(" ")}\n`);
-		}).catch(() => {});
+		if (!isSuppressedMessage(args)) {
+			ensureLogStream()
+				.then((stream) => {
+					const timestamp = new Date().toISOString();
+					stream.write(`[${timestamp}] [log] ${args.map(String).join(" ")}\n`);
+				})
+				.catch((err) => {
+					__origStderrWrite(`[llamaindex] debug-log error: ${err.message}\n`);
+				});
+		}
 		return __origConsoleLog(...args);
 	};
 
 	const __origConsoleWarn = console.warn.bind(console);
 	console.warn = ((...args: any[]) => {
-		__origConsoleWarn(...args);
-		ensureLogStream().then((stream) => {
-			const timestamp = new Date().toISOString();
-			stream.write(`[${timestamp}] [warn] ${args.map(String).join(" ")}\n`);
-		}).catch(() => {});
+		if (!isSuppressedMessage(args)) {
+			ensureLogStream()
+				.then((stream) => {
+					const timestamp = new Date().toISOString();
+					stream.write(`[${timestamp}] [warn] ${args.map(String).join(" ")}\n`);
+				})
+				.catch((err) => {
+					__origStderrWrite(`[llamaindex] debug-log error: ${err.message}\n`);
+				});
+		}
+		return __origConsoleWarn(...args);
 	}) as typeof console.warn;
 
 	const __origConsoleError = console.error.bind(console);
 	console.error = (...args: any[]) => {
-		ensureLogStream().then((stream) => {
-			const timestamp = new Date().toISOString();
-			stream.write(`[${timestamp}] [error] ${args.map(String).join(" ")}\n`);
-		}).catch(() => {});
+		if (!isSuppressedMessage(args)) {
+			ensureLogStream()
+				.then((stream) => {
+					const timestamp = new Date().toISOString();
+					stream.write(`[${timestamp}] [error] ${args.map(String).join(" ")}\n`);
+				})
+				.catch((err) => {
+					__origStderrWrite(`[llamaindex] debug-log error: ${err.message}\n`);
+				});
+		}
 		return __origConsoleError(...args);
 	};
 }
