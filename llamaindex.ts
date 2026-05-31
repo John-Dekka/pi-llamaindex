@@ -1004,7 +1004,7 @@ export default async function (pi: ExtensionAPI) {
 		},
 		execute: async (_toolCallId, params, signal) => {
 			if (signal?.aborted) {
-				return { content: [{ type: "text" as const, text: "Cancelled." }] };
+				return { content: [{ type: "text" as const, text: "Cancelled." }], details: {} };
 			}
 			const topK = Math.min(params.limit ?? 5, 20);
 			const results = await queryIndex(params.query, topK, params.tags, signal);
@@ -1022,6 +1022,7 @@ export default async function (pi: ExtensionAPI) {
 									"Use `/li index <path>` first to index files.",
 							},
 						],
+							details: {},
 					};
 				}
 				return {
@@ -1031,6 +1032,7 @@ export default async function (pi: ExtensionAPI) {
 							text: `No results found for "${params.query}". Try a different query or index more files.`,
 						},
 					],
+						details: {},
 				};
 			}
 
@@ -1056,7 +1058,8 @@ export default async function (pi: ExtensionAPI) {
 			}
 
 			return {
-				content: [{ type: "text" as const, text: lines.join("\n") }],
+					content: [{ type: "text" as const, text: lines.join("\n") }],
+					details: {},
 			};
 		},
 		renderResult(result, { expanded, isPartial }, theme) {
@@ -1064,7 +1067,7 @@ export default async function (pi: ExtensionAPI) {
 				return new Text(theme.fg("warning", "Querying LlamaIndex..."), 0, 0);
 			}
 
-			const textContent = result.content.find((c: any) => c.type === "text");
+			const textContent = result.content.find((c: { type: string; text?: string }): c is { type: "text"; text: string } => c.type === "text" && typeof c.text === "string");
 			if (!textContent) {
 				return new Text(theme.fg("dim", "(no content)"), 0, 0);
 			}
@@ -1114,6 +1117,7 @@ export default async function (pi: ExtensionAPI) {
 									"Use `/li index <path>` first to index files, then tags will be available.",
 							},
 						],
+							details: {},
 					};
 				}
 				return {
@@ -1125,6 +1129,7 @@ export default async function (pi: ExtensionAPI) {
 								"Tags are extracted from YAML frontmatter `tags:` fields.",
 						},
 					],
+						details: {},
 				};
 			}
 
@@ -1144,7 +1149,8 @@ export default async function (pi: ExtensionAPI) {
 			);
 
 			return {
-				content: [{ type: "text" as const, text: lines.join("\n") }],
+					content: [{ type: "text" as const, text: lines.join("\n") }],
+					details: {},
 			};
 		},
 	});
@@ -1193,7 +1199,7 @@ export default async function (pi: ExtensionAPI) {
 
 		if (files.length === 0) {
 			ctx.ui.notify(
-				`No indexable files (.md, .yaml, .yml) found in: ${path}`,
+				`No indexable files (.md, .yaml, .yml) found in: ${indexPath}`,
 				"warning",
 			);
 			return;
@@ -1232,7 +1238,7 @@ export default async function (pi: ExtensionAPI) {
 				ctx.ui.notify(
 					`Indexed ${result.documents} document(s) from ${files.length} file(s) ` +
 						`in "${relPath}" (storage: ${storageDir})`,
-					"success",
+					"info",
 				);
 			}
 		} catch (err) {

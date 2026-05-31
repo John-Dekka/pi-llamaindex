@@ -16,6 +16,7 @@ No API key needed. The extension uses local HuggingFace embeddings out of the bo
 
 ```
 /li index ~/my-docs                     # Index a directory
+/li rebuild ~/my-docs                   # Wipe and rebuild from scratch
 /li query "bullet patterns"              # Query the index
 /li query "collision" --tag tile-collision  # Query filtered by tag
 /li tags                                # List all unique tags
@@ -77,7 +78,7 @@ Other automatic features:
 
 ### YAML Frontmatter
 
-Files with YAML frontmatter (`---` delimited blocks) are parsed to extract structured metadata:
+Files with YAML frontmatter (`---` delimited blocks) have their metadata extracted automatically — this works for `.yaml`, `.yml`, `.md`, and `.mdx` files:
 
 ```yaml
 ---
@@ -97,7 +98,7 @@ The actual document content goes here...
 
 ### Supported File Types
 
-- `.md`, `.mdx` — Plain markdown files
+- `.md`, `.mdx` — Markdown files (YAML frontmatter is extracted when present)
 - `.yaml`, `.yml` — YAML frontmatter files with markdown body
 
 ### Storage
