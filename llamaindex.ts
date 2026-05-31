@@ -8,6 +8,7 @@
  *
  * Commands:
  *   /li index <path>          — Index a file or directory
+ *   /li rebuild <path>        — Wipe index and rebuild from scratch
  *   /li status                — Show index statistics
  *   /li query <text> [--tag]  — Query the index (results shown in chat)
  *   /li tags                  — List all unique tags from indexed files
@@ -878,6 +879,11 @@ export default async function (pi: ExtensionAPI) {
 			description: "Index a file or directory",
 		},
 		{
+			value: "rebuild",
+			label: "rebuild",
+			description: "Wipe the index and rebuild from scratch",
+		},
+		{
 			value: "query",
 			label: "query",
 			description: "Query the index",
@@ -917,6 +923,10 @@ export default async function (pi: ExtensionAPI) {
 			switch (cmd) {
 				case "index":
 					await cmdIndex(parts.slice(1).join(" ") || ".", ctx);
+					break;
+				case "rebuild":
+					// Append --rebuild so cmdIndex handles the wipe
+					await cmdIndex((parts.slice(1).join(" ") || ".") + " --rebuild", ctx);
 					break;
 				case "query":
 					await cmdQuery(parts.slice(1).join(" "), ctx);
