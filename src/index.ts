@@ -21,6 +21,7 @@ import { join, resolve, relative } from "node:path";
 
 import type { IndexState } from "./types.js";
 import { buildIndex, queryIndex } from "./llamaindex-engine.js";
+import { parseQueryArgs } from "./query-args.js";
 import { getState, setState, setIndex, getStorageDir, loadState, saveState, stateFile } from "./state.js";
 import { collectFiles, isAllowedFile } from "./scanner.js";
 import { BOLD, CYAN, DIM, GREEN, RESET, progressBar, UI_WIDGET_KEY } from "./ui.js";
@@ -384,6 +385,7 @@ export default async function (pi: ExtensionAPI) {
 					]);
 				},
 				ctx.signal,
+				(msg) => ctx.ui.notify(msg, "warning"),
 			);
 
 			const failureMsg = result.failed > 0
@@ -442,37 +444,7 @@ export default async function (pi: ExtensionAPI) {
 			return;
 		}
 
-		// Parse --tag <value> flags and an optional trailing limit number.
-		// We split into tokens properly so "my --tag thing" doesn't match
-		// a literal "--tag" inside the query text — only `--tag` as its
-		// own whitespace-delimited token is treated as a filter flag.
-		const tokens = query.trim().split(/\s+/);
-		const filterTags: string[] = [];
-		const queryTokens: string[] = [];
-		let limit = DEFAULT_TOP_K;
-		let i = 0;
-		while (i < tokens.length) {
-			if (tokens[i] === "--tag" && i + 1 < tokens.length) {
-				filterTags.push(tokens[i + 1]);
-				i += 2;
-			} else {
-				queryTokens.push(tokens[i]);
-				i++;
-			}
-		}
-
-		// Check if the last token is a standalone number (limit override).
-		// Must be after --tag parsing so "foo --tag bar 10" still works.
-		if (queryTokens.length >= 2) {
-			const last = queryTokens[queryTokens.length - 1];
-			const parsed = parseInt(last, 10);
-			if (!Number.isNaN(parsed) && parsed >= 1 && parsed <= MAX_COMMAND_TOP_K) {
-				limit = parsed;
-				queryTokens.pop(); // remove the number from the query
-			}
-		}
-
-		const queryText = queryTokens.join(" ");
+		const { queryText, filterTags, limit } = parseQueryArgs(query);
 
 		if (!queryText) {
 			ctx.ui.notify(QUERY_USAGE, "warning");

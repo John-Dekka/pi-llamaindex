@@ -169,8 +169,14 @@ export function ensureEmbeddings(li: typeof import("llamaindex")): void {
  *
  * If the index is already cached in memory, returns it directly.
  * Falls back to loading from the storage directory.
+ *
+ * @param onError - Optional callback invoked when loading fails (e.g. corruption)
  */
-export async function loadIndex(storageDir: string, signal?: AbortSignal): Promise<LlamaIndexIndex | null> {
+export async function loadIndex(
+	storageDir: string,
+	signal?: AbortSignal,
+	onError?: (msg: string) => void,
+): Promise<LlamaIndexIndex | null> {
 	if (signal?.aborted) return null;
 	if (getIndex()) return getIndex();
 
@@ -188,9 +194,9 @@ export async function loadIndex(storageDir: string, signal?: AbortSignal): Promi
 		setState(loadState(storageDir));
 		return index;
 	} catch (err) {
-		process.stderr.write(
-			`\r\x1b[2K[llamaindex] Failed to load persisted index: ${(err as Error).message}\n`,
-		);
+		const msg = `Index corrupted or incompatible — run \`/li rebuild\` to recreate it: ${(err as Error).message}`;
+		process.stderr.write(`\r\x1b[2K[llamaindex] ${msg}\n`);
+		onError?.(msg);
 		return null;
 	}
 }
@@ -204,7 +210,8 @@ export async function loadIndex(storageDir: string, signal?: AbortSignal): Promi
  *
  * Handles both comma-separated strings (current format) and arrays (legacy).
  */
-function parseTags(rawTags: unknown): Set<string> {
+/** @internal exported for testing */
+export function parseTags(rawTags: unknown): Set<string> {
 	const tags = new Set<string>();
 	const tagsStr = Array.isArray(rawTags)
 		? (rawTags as string[]).join(", ")
@@ -238,6 +245,7 @@ export async function buildIndex(
 	storageDir: string,
 	onProgress?: (current: number, total: number, file: string) => void,
 	signal?: AbortSignal,
+	onError?: (msg: string) => void,
 ): Promise<{ documents: number; failed: number }> {
 	if (signal?.aborted) return { documents: 0, failed: 0 };
 
@@ -247,7 +255,7 @@ export async function buildIndex(
 
 	ensureEmbeddings(li);
 
-	let index = await loadIndex(storageDir, signal);
+	let index = await loadIndex(storageDir, signal, onError);
 	if (signal?.aborted) return { documents: 0, failed: 0 };
 
 	const existingPaths = new Set(getState().indexedPaths);
@@ -396,7 +404,10 @@ export async function queryIndex(
 
 	let index = getIndex();
 	if (!index) {
-		index = await loadIndex(storageDir, signal);
+		// Notify on index load failure — the user can rebuild with /li rebuild
+		index = await loadIndex(storageDir, signal, (msg) => {
+			process.stderr.write(`[llamaindex] queryIndex: ${msg}\n`);
+		});
 		if (!index || signal?.aborted) return [];
 	}
 
@@ -405,15 +416,6 @@ export async function queryIndex(
 	// relevant hits while keeping memory/CPU under control (60 caused OOM on CPU).
 	const retriever = index.asRetriever({ similarityTopK: RETRIEVER_TOP_K });
 	let nodes = await retriever.retrieve({ query });
-	if (!index) {
-		index = await loadIndex(storageDir, signal);
-		if (!index || signal?.aborted) return [];
-	}
-
-	// Stage 1: Retrieve N candidates with the bi-encoder (fast, broad).
-	// The cross-encoder reranks these — RETRIEVER_TOP_K is enough to cover
-	// relevant hits while keeping memory/CPU under control (60 caused OOM on CPU).
-
 
 	if (!nodes || nodes.length === 0) return [];
 
