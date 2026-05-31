@@ -6,6 +6,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { Buffer } from "node:buffer";
 import { extname, basename } from "node:path";
 import { parseYamlFrontmatter } from "./frontmatter.js";
 import type { LlamaIndexDocument } from "./types.js";
@@ -16,7 +17,7 @@ import type { LlamaIndexDocument } from "./types.js";
  * Handles:
  * - YAML files with frontmatter (title, category, tags, custom fields)
  * - Markdown files with/without YAML frontmatter
- * - Binary file detection (graceful fallback)
+ * - Binary file detection (graceful fallback with null-byte check)
  *
  * @param fp - Absolute file path
  * @param li - LlamaIndex module (from dynamic import)
@@ -25,7 +26,16 @@ import type { LlamaIndexDocument } from "./types.js";
 export function fileToDocuments(fp: string, li: typeof import("llamaindex")): LlamaIndexDocument[] {
 	let content: string;
 	try {
-		content = readFileSync(fp, "utf-8");
+		// Read as buffer first to detect binary files before decoding
+		const buffer = readFileSync(fp);
+		// Binary detection: null bytes indicate non-text content
+		if (buffer.includes(0)) {
+			process.stderr.write(
+				`[llamaindex] Skipping binary-looking file: ${fp}\n`,
+			);
+			return [];
+		}
+		content = buffer.toString("utf-8");
 	} catch (err) {
 		process.stderr.write(
 			`[llamaindex] Skipping unreadable file: ${fp} (${(err as Error).message})\n`,

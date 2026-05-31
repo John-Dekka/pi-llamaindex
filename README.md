@@ -62,6 +62,7 @@ If the reranker fails for any reason, the pipeline **gracefully falls back** to 
 | **Cancellation support** | Abort signals propagated through embedding, retrieval, and reranking |
 | **Pre-downloaded models** | Both models cached to `~/.cache/pi-llamaindex/transformers/` at install time |
 | **Batch processing** | Files are parsed and indexed in batches (50 at a time) to minimize memory |
+| **Debug logging** | Set `PI_LLAMAINDEX_DEBUG=1` to capture all stderr to `debug.log` (⚠ may contain sensitive data) |
 
 ### Commands
 
@@ -117,6 +118,20 @@ The actual document content goes here...
 
 The index is persisted at `~/.pi/Llamaindex/`. Override with `PI_LLAMAINDEX_DIR` environment variable.
 Model cache is stored separately at `~/.cache/pi-llamaindex/transformers/` and survives `node_modules` deletion.
+
+### Debug Logging
+
+Set `PI_LLAMAINDEX_DEBUG=1` to capture all stderr output to `~/.pi/Llamaindex/debug.log`
+(or `$PI_LLAMAINDEX_DIR/debug.log`). This includes:
+- Transformers.js and ONNX runtime messages
+- LlamaIndex internal warnings
+- Extension progress and error messages
+- ANSI escape codes are stripped for clean log files
+
+> ⚠ **Security note:** The debug log captures ALL stderr output, which may include
+> error messages containing file paths or, in rare cases, environment variable values.
+> Review the log before sharing it. Do not enable debug mode in production
+> environments where stderr may contain sensitive data.
 
 ## Architecture
 

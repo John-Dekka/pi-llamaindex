@@ -628,14 +628,22 @@ export default async function (pi: ExtensionAPI) {
 		}
 
 		const sorted = [...state.tags].sort((a, b) => a.localeCompare(b));
+		const MAX_SHOWN_TAGS = 100;
+		const totalTags = sorted.length;
+		const truncated = totalTags > MAX_SHOWN_TAGS;
+		const shown = truncated ? sorted.slice(0, MAX_SHOWN_TAGS) : sorted;
 
-		let md = `## 🏷️ LlamaIndex Tags (${sorted.length})\n\n`;
+		let md = `## 🏷️ LlamaIndex Tags (${totalTags})\n\n`;
 		md += `Indexed files: ${state.fileCount}  •  Documents: ${state.chunkCount}\n\n`;
 		md += "| Tag | |\n|---|---|\n";
 
-		for (const tag of sorted) {
+		for (const tag of shown) {
 			const escaped = tag.replace(/[|]/g, "\\|");
 			md += `| \`${escaped}\` | |\n`;
+		}
+
+		if (truncated) {
+			md += `| *… and ${totalTags - MAX_SHOWN_TAGS} more* | |\n`;
 		}
 
 		md += `\n---\n`;
