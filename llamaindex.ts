@@ -187,6 +187,27 @@ const ALLOWED_EXTENSIONS = new Set([".yaml", ".yml", ".md", ".mdx"]);
 // State
 // ============
 
+// State is stored on globalThis so it survives module reloads by pi's
+// extension system. If the module is reloaded between tool calls, the
+// ONNX session (hundreds of MB) doesn't get re-created.
+const G = globalThis as any;
+const CACHE_KEY = "__piLlamaIndex3";
+
+function getCache(): Record<string, any> {
+	if (!G[CACHE_KEY]) G[CACHE_KEY] = {};
+	return G[CACHE_KEY];
+}
+
+function cached<T>(key: string, fallback: T): T {
+	const c = getCache();
+	if (!(key in c)) c[key] = fallback;
+	return c[key];
+}
+
+function setCache(key: string, value: any) {
+	getCache()[key] = value;
+}
+
 let _index: any = null;
 let _state: IndexState = {
 	indexedPaths: [],
@@ -340,6 +361,11 @@ let _liModules: Record<string, any> | null = null;
 let _hfEmbedding: any = null;
 let _oaEmbedding: any = null;
 
+// Also cache liModules on globalThis for cross-reload persistence
+function cachedLiModules(): Record<string, any> | null {
+	return cached<Record<string, any> | null>("liModules", null);
+}
+
 // ============
 // Cross-encoder reranker
 // ============
@@ -349,10 +375,9 @@ let _oaEmbedding: any = null;
 // relevance accuracy. The cross-encoder processes query+document pairs
 // through a transformer jointly, which the bi-encoder fundamentally can't.
 
-let _reranker: { tokenizer: any; model: any; softmax: Function } | null = null;
-
 async function ensureReranker() {
-	if (!_reranker) {
+	let reranker = cached<{ tokenizer: any; model: any; softmax: Function } | null>("reranker", null);
+	if (!reranker) {
 		const cacheDir = join(homedir(), ".cache", "pi-llamaindex", "transformers");
 		mkdirSync(cacheDir, { recursive: true });
 
@@ -376,9 +401,10 @@ async function ensureReranker() {
 			{ quantized: true, dtype: "fp32" },
 		);
 
-		_reranker = { tokenizer, model, softmax };
+		reranker = { tokenizer, model, softmax };
+		setCache("reranker", reranker);
 	}
-	return _reranker;
+	return reranker;
 }
 
 async function rerank(
@@ -444,6 +470,7 @@ async function configureTransformersCache() {
 }
 
 async function ensureLiModules() {
+	_liModules = cachedLiModules();
 	if (!_liModules) {
 		// Must set cache dir BEFORE importing @llamaindex/huggingface
 		// so the env singleton has the right path when pipeline() is called.
@@ -454,9 +481,12 @@ async function ensureLiModules() {
 			huggingface: await import("@llamaindex/huggingface"),
 			openai: await import("@llamaindex/openai"),
 		};
-		_hfEmbedding = _liModules.huggingface.HuggingFaceEmbedding;
-		_oaEmbedding = _liModules.openai.OpenAIEmbedding;
+		setCache("liModules", _liModules);
 	}
+	// Always restore references — needed when module was reloaded but
+	// _liModules came from globalThis cache.
+	_hfEmbedding = _liModules.huggingface.HuggingFaceEmbedding;
+	_oaEmbedding = _liModules.openai.OpenAIEmbedding;
 	return _liModules.lamaindex as typeof import("llamaindex");
 }
 
