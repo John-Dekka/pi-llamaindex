@@ -27,10 +27,18 @@
 // embedModel, etc.) is shared correctly at runtime. We suppress it
 // here before any dynamic import of llamaindex packages.
 
+// LlamaIndex emits this on console.error, not just console.warn, so we need
+// to suppress it on both channels.
 const __origWarn = console.warn;
 console.warn = (...args: any[]) => {
 	if (typeof args[0] === "string" && args[0].includes("llamaindex was already imported")) return;
 	__origWarn.apply(console, args);
+};
+
+const __origError = console.error;
+console.error = (...args: any[]) => {
+	if (typeof args[0] === "string" && args[0].includes("llamaindex was already imported")) return;
+	__origError.apply(console, args);
 };
 
 // ============
