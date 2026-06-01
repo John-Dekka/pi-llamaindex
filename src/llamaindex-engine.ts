@@ -488,6 +488,11 @@ export async function queryIndex(
 		);
 	}
 
+	// Embeddings must be configured BEFORE loading the persisted index —
+	// LlamaIndex's SimpleVectorStore.fromPersistDir() reads Settings.embedModel
+	// to deserialize the vector store. Without it, loading throws.
+	ensureEmbeddings(li);
+
 	let index = getIndex();
 	if (!index) {
 		// Notify on index load failure — the user can rebuild with /li rebuild
@@ -497,11 +502,6 @@ export async function queryIndex(
 		}, state);
 		if (!index || signal?.aborted) return [];
 	}
-
-	// Embeddings must be configured before retrieval — the retriever needs them
-	// to embed the query text. Do this AFTER confirming we have an index so we
-	// don't load a 130MB model only to return zero results.
-	ensureEmbeddings(li);
 	if (signal?.aborted) return [];
 
 	// Stage 1: Retrieve candidates with the bi-encoder (fast, broad).
