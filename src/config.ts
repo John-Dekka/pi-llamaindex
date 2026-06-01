@@ -104,13 +104,6 @@ export const UI_WIDGET_KEY = "llamaindex" as const;
 // Embedding models
 // ============
 
-/**
- * Whether to deduplicate query results by file path.
- * When true, only the highest-scoring chunk per file is returned.
- * When false, all relevant chunks from the same file may be included.
- */
-export const DEDUP_BY_FILE = true;
-
 /** Default local embedding model from HuggingFace */
 export const LOCAL_EMBED_MODEL = "BAAI/bge-small-en-v1.5";
 

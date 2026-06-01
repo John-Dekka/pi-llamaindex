@@ -38,7 +38,6 @@ import {
 	LOCAL_EMBED_MODEL,
 	OPENAI_EMBED_MODEL,
 	INDEX_BATCH_SIZE,
-	DEDUP_BY_FILE,
 } from "./config.js";
 
 // ============
