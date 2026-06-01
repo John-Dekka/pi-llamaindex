@@ -314,19 +314,26 @@ export async function buildIndex(
 	let docsThisBatch = 0;
 	let batchStart = 0;
 	const allTags = new Set(getState().tags);
+	/** Files that failed during Phase 1 parsing — excluded from indexedPaths
+	 *  to ensure they are retried on a subsequent buildIndex call. */
+	const phase1FailedFiles = new Set<string>();
 
 	/**
 	 * Save the accumulated state so far (used on abort or error mid-batch).
 	 * This ensures the vector store index and state.json stay consistent even
 	 * when the operation is interrupted.
 	 *
-	 * @param includeCurrentBatch - If true, also marks the current batch's files
-	 *   as indexed (used when an error occurs during insert, so partial inserts
-	 *   from this batch aren't re-attempted on retry).
+	 * On abort or error, the current batch's files are intentionally NOT marked
+	 * as indexed because we cannot determine which documents were already
+	 * inserted. This means some documents may be re-inserted on retry, but NONE
+	 * are silently lost.
+	 * Files that failed Phase 1 parsing are also excluded so they are retried.
 	 */
-	const savePartialState = (includeCurrentBatch?: boolean) => {
-		const sliceEnd = includeCurrentBatch ? batchStart + INDEX_BATCH_SIZE : batchStart;
-		const partialMergedPaths = new Set([...existingPaths, ...newFiles.slice(0, sliceEnd)]);
+	const savePartialState = () => {
+		const partialMergedPaths = new Set([
+			...existingPaths,
+			...newFiles.slice(0, batchStart).filter((fp) => !phase1FailedFiles.has(fp)),
+		]);
 		const partialState: IndexState = {
 			indexedPaths: [...partialMergedPaths],
 			indexedAt: new Date().toISOString(),
@@ -367,6 +374,7 @@ export async function buildIndex(
 					`\r\x1b[2K[${batchStart + i + 1}/${newFiles.length}] ERROR ${name}: ${(err as Error).message}\n`,
 				);
 				failedCount++;
+				phase1FailedFiles.add(fp);
 			}
 		}
 
@@ -398,9 +406,11 @@ export async function buildIndex(
 			}
 		} catch (err) {
 			// Save partial state before rethrowing so chunkCount stays consistent.
-			// The current batch's file paths are included so partial inserts
-			// from this batch won't be re-attempted on retry.
-			savePartialState(true);
+			// The current batch's files are NOT marked as indexed (we can't
+			// determine which docs were inserted), so they will be retried.
+			// A small number of duplicates may occur, which is safer than
+			// silently losing data.
+			savePartialState();
 			throw err; // rethrow so the caller sees the failure
 		}
 
@@ -419,7 +429,10 @@ export async function buildIndex(
 	setIndex(index);
 
 	const embedModel = getActiveEmbedModelName();
-	const mergedPaths = new Set([...existingPaths, ...files]);
+	// Exclude files that failed Phase 1 parsing so they will be retried
+	// on the next buildIndex call rather than being silently skipped.
+	const successfulFiles = files.filter((fp) => !phase1FailedFiles.has(fp));
+	const mergedPaths = new Set([...existingPaths, ...successfulFiles]);
 	const newState: IndexState = {
 		indexedPaths: [...mergedPaths],
 		indexedAt: new Date().toISOString(),
