@@ -338,9 +338,8 @@ export default async function (pi: ExtensionAPI) {
 		indexPath = indexPath.replace(/\s*--rebuild\s*/, "").trim();
 
 		if (!indexPath) {
-			// Default: re-index the same directory as the last indexed path
-			const lastPath = getState().indexedPaths[0];
-			indexPath = lastPath ? join(lastPath, "..") : ".";
+			// Default to current working directory
+			indexPath = ".";
 		}
 		if (!existsSync(indexPath)) {
 			ctx.ui.notify(`Path not found: ${indexPath}`, "error");
