@@ -287,7 +287,32 @@ export async function buildIndex(
 	let failedCount = 0;
 	let totalDocs = 0;
 	let docsThisBatch = 0;
+	let batchStart = 0;
 	const allTags = new Set(getState().tags);
+
+	/**
+	 * Save the accumulated state so far (used on abort or error mid-batch).
+	 * This ensures the vector store index and state.json stay consistent even
+	 * when the operation is interrupted.
+	 *
+	 * @param includeCurrentBatch - If true, also marks the current batch's files
+	 *   as indexed (used when an error occurs during insert, so partial inserts
+	 *   from this batch aren't re-attempted on retry).
+	 */
+	const savePartialState = (includeCurrentBatch?: boolean) => {
+		const sliceEnd = includeCurrentBatch ? batchStart + INDEX_BATCH_SIZE : batchStart;
+		const partialMergedPaths = new Set([...existingPaths, ...newFiles.slice(0, sliceEnd)]);
+		const partialState: IndexState = {
+			indexedPaths: [...partialMergedPaths],
+			indexedAt: new Date().toISOString(),
+			fileCount: partialMergedPaths.size,
+			chunkCount: getState().chunkCount + totalInserted,
+			tags: [...allTags],
+			embedModel: getActiveEmbedModelName(),
+		};
+		setState(partialState);
+		saveState(storageDir, partialState);
+	};
 
 	// First pass: count total documents (fast — no ONNX yet)
 	for (const fp of newFiles) {
@@ -299,15 +324,21 @@ export async function buildIndex(
 		}
 	}
 
-	for (let batchStart = 0; batchStart < newFiles.length; batchStart += INDEX_BATCH_SIZE) {
-		if (signal?.aborted) return { documents: totalInserted, failed: failedCount };
+	for (batchStart = 0; batchStart < newFiles.length; batchStart += INDEX_BATCH_SIZE) {
+		if (signal?.aborted) {
+			savePartialState();
+			return { documents: totalInserted, failed: failedCount };
+		}
 
 		const batchFiles = newFiles.slice(batchStart, batchStart + INDEX_BATCH_SIZE);
 
 		// Phase 1: Read and parse files into documents (fast, CPU-bound)
 		const batchDocs: LlamaIndexDocument[] = [];
 		for (let i = 0; i < batchFiles.length; i++) {
-			if (signal?.aborted) return { documents: totalInserted, failed: failedCount };
+			if (signal?.aborted) {
+				savePartialState();
+				return { documents: totalInserted, failed: failedCount };
+			}
 			const fp = batchFiles[i];
 			const name = basename(fp);
 			try {
@@ -331,7 +362,10 @@ export async function buildIndex(
 		// document insertion fails partway through the batch.
 		try {
 			for (let i = 0; i < docsThisBatch; i++) {
-				if (signal?.aborted) return { documents: totalInserted, failed: failedCount };
+				if (signal?.aborted) {
+					savePartialState();
+					return { documents: totalInserted, failed: failedCount };
+				}
 				const doc = batchDocs[i];
 				const globalIdx = totalInserted + i + 1;
 				const fileName =
@@ -341,19 +375,10 @@ export async function buildIndex(
 				onProgress?.(globalIdx, totalDocs || docsThisBatch, fileName);
 			}
 		} catch (err) {
-			// Save partial state before rethrowing so chunkCount stays consistent
-			const embedModel = getActiveEmbedModelName();
-			const partialMergedPaths = new Set([...existingPaths, ...newFiles.slice(0, batchStart + batchFiles.length)]);
-			const partialState: IndexState = {
-				indexedPaths: [...partialMergedPaths],
-				indexedAt: new Date().toISOString(),
-				fileCount: partialMergedPaths.size,
-				chunkCount: getState().chunkCount + totalInserted,
-				tags: [...allTags],
-				embedModel,
-			};
-			setState(partialState);
-			saveState(storageDir, partialState);
+			// Save partial state before rethrowing so chunkCount stays consistent.
+			// The current batch's file paths are included so partial inserts
+			// from this batch won't be re-attempted on retry.
+			savePartialState(true);
 			throw err; // rethrow so the caller sees the failure
 		}
 
