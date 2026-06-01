@@ -23,6 +23,8 @@ interface GlobalStore {
 	liModules: LiModules | null;
 	reranker: RerankerModel | null;
 	cachedEmbedModel: unknown;
+	/** Provider name for the cached embed model: "openai" | "huggingface" | undefined */
+	cachedEmbedProvider: string | undefined;
 }
 
 function getStore(): Partial<GlobalStore> {
@@ -92,6 +94,18 @@ export function getCachedEmbedModel(): unknown {
 
 export function setCachedEmbedModel(v: unknown) {
 	getStore().cachedEmbedModel = v;
+}
+
+/**
+ * Get the provider name for the cached embed model.
+ * Returns "openai", "huggingface", or undefined if not yet configured.
+ */
+export function getCachedEmbedProvider(): string | undefined {
+	return getStore().cachedEmbedProvider;
+}
+
+export function setCachedEmbedProvider(v: string | undefined) {
+	getStore().cachedEmbedProvider = v;
 }
 
 // ============

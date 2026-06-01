@@ -24,6 +24,8 @@ import {
 	setCachedLiModules,
 	getCachedEmbedModel,
 	setCachedEmbedModel,
+	getCachedEmbedProvider,
+	setCachedEmbedProvider,
 	getStorageDir,
 	loadState,
 	saveState,
@@ -86,6 +88,9 @@ export async function ensureLiModules(): Promise<typeof import("llamaindex")> {
 // Embedding configuration
 // ============
 
+/** Possible embedding providers */
+type EmbedProvider = "openai" | "huggingface";
+
 // Embedding constructor types — opaque since they come from dynamic imports
 type EmbeddingConstructor = new (config: Record<string, unknown>) => unknown;
 
@@ -103,33 +108,44 @@ function getOaEmbeddingClass(): EmbeddingConstructor | undefined {
 let _embeddingsConfigured = false;
 
 /**
+ * Return the desired provider based on the current environment.
+ */
+function desiredProvider(): EmbedProvider {
+	return process.env.OPENAI_API_KEY ? "openai" : "huggingface";
+}
+
+/**
  * Configure the LlamaIndex embedding model.
  *
  * Uses OpenAI text-embedding-3-small if OPENAI_API_KEY is set,
  * otherwise falls back to local HuggingFace bge-small-en-v1.5.
  *
- * Idempotent — only constructs a new model if the cached one
- * has a different constructor (i.e., switching providers).
+ * Idempotent — only constructs a new model when switching providers.
+ * Provider identity is tracked by a simple string ("openai" | "huggingface")
+ * rather than fragile constructor comparisons.
  */
 export function configureEmbeddings(li: typeof import("llamaindex")) {
 	// Note: Settings.embedModel getter THROWS if not set (it doesn't return
 	// undefined), so we always set it directly without checking first.
 	const key = process.env.OPENAI_API_KEY;
 	try {
-		if (key) {
-			const oaClass = getOaEmbeddingClass();
-			if (!getCachedEmbedModel() || (getCachedEmbedModel() as object).constructor !== oaClass) {
+		const currentProvider = getCachedEmbedProvider();
+		const targetProvider = desiredProvider();
+
+		if (currentProvider !== targetProvider || !getCachedEmbedModel()) {
+			// Switching providers OR first-time init — construct a new model
+			if (targetProvider === "openai") {
+				const oaClass = getOaEmbeddingClass();
+				if (!oaClass) throw new Error("OpenAIEmbedding class not available");
 				setCachedEmbedModel(
 					new (oaClass as EmbeddingConstructor)({
 						apiKey: key,
 						model: OPENAI_EMBED_MODEL,
 					}),
 				);
-			}
-			li.Settings.embedModel = getCachedEmbedModel();
-		} else {
-			const hfClass = getHfEmbeddingClass();
-			if (!getCachedEmbedModel() || (getCachedEmbedModel() as object).constructor !== hfClass) {
+			} else {
+				const hfClass = getHfEmbeddingClass();
+				if (!hfClass) throw new Error("HuggingFaceEmbedding class not available");
 				setCachedEmbedModel(
 					new (hfClass as EmbeddingConstructor)({
 						modelType: LOCAL_EMBED_MODEL,
@@ -140,12 +156,14 @@ export function configureEmbeddings(li: typeof import("llamaindex")) {
 					}),
 				);
 			}
-			li.Settings.embedModel = getCachedEmbedModel();
+			setCachedEmbedProvider(targetProvider);
 		}
+
+		li.Settings.embedModel = getCachedEmbedModel();
 		_embeddingsConfigured = true;
 	} catch (err) {
 		throw new Error(
-			`Failed to set embed model${key ? " (OpenAI)" : " (HuggingFace)"}: ${(err as Error).message}`,
+			`Failed to set embed model (${desiredProvider()}): ${(err as Error).message}`,
 		);
 	}
 }
