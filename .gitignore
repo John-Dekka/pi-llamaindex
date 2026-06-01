@@ -3,3 +3,6 @@ dist/
 .cache/
 *.log
 update.md
+
+# RTK (Rust Token Killer) tool cache
+.rtk/
