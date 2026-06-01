@@ -22,15 +22,16 @@ export const ALLOWED_EXTENSIONS = new Set([".yaml", ".yml", ".md", ".mdx"]);
 // Retrieval pipeline
 // ============
 
-/** Number of candidates retrieved by the bi-encoder before reranking.
- *  Set slightly above MAX_TOP_K so deduplication has room to work. */
-export const RETRIEVER_TOP_K = 25;
+/** Default number of candidates retrieved by the bi-encoder before reranking.
+ *  Scaled dynamically when topK exceeds this / 2, so Stage 2 has enough
+ *  candidates to pick from after pre-dedup. */
+export const RETRIEVER_TOP_K = 30;
 
 /** Batch size for cross-encoder reranking (memory/CPU bound) */
 export const RERANKER_BATCH_SIZE = 10;
 
 /** Default number of final results returned to the user */
-export const DEFAULT_TOP_K = 5;
+export const DEFAULT_TOP_K = 10;
 
 /** Maximum results the tool will ever return */
 export const MAX_TOP_K = 20;

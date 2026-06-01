@@ -513,10 +513,10 @@ export async function queryIndex(
 	ensureEmbeddings(li);
 	if (signal?.aborted) return [];
 
-	// Stage 1: Retrieve N candidates with the bi-encoder (fast, broad).
-	// The cross-encoder reranks these — RETRIEVER_TOP_K is enough to cover
-	// relevant hits while keeping memory/CPU under control (60 caused OOM on CPU).
-	const retriever = index.asRetriever({ similarityTopK: RETRIEVER_TOP_K });
+	// Stage 1: Retrieve candidates with the bi-encoder (fast, broad).
+	// Scale dynamically so Stage 2 has enough to pick topK after pre-dedup.
+	const retrieveK = Math.max(RETRIEVER_TOP_K, Math.ceil(topK * 2));
+	const retriever = index.asRetriever({ similarityTopK: retrieveK });
 	let nodes = await retriever.retrieve({ query });
 
 	if (!nodes || nodes.length === 0) return [];
@@ -560,34 +560,30 @@ export async function queryIndex(
 		};
 	});
 
+	// Pre-dedup by file before Stage 2 — keeps the chunk with the highest
+	// bi-encoder score per file. The cross-encoder refines cross-file ordering;
+	// within a file the top chunk is almost always correct, so this saves
+	// significant reranker work without sacrificing accuracy.
+	const seen = new Set<string>();
+	const deduped: QueryResult[] = [];
+	for (const r of candidates) {
+		if (!seen.has(r.file)) {
+			seen.add(r.file);
+			deduped.push(r);
+		}
+	}
+
 	// Stage 2: Re-rank with cross-encoder (slow but much more accurate)
 	try {
-		const reranked = await rerank(query, candidates, signal);
-
-		// Deduplicate by file — keep the highest-scoring node per file
-		const seen = new Set<string>();
-		const deduped: QueryResult[] = [];
-		for (const r of reranked) {
-			if (!seen.has(r.file)) {
-				seen.add(r.file);
-				deduped.push(r);
-			}
-		}
-		return deduped.slice(0, topK);
+		const reranked = await rerank(query, deduped, signal);
+		return reranked.slice(0, topK);
 	} catch (err) {
 		// Reranker failed — fall back to bi-encoder scores
 		process.stderr.write(
 			`\r\x1b[2K[llamaindex] Reranker failed, using bi-encoder scores: ${(err as Error).message}\n`,
 		);
-		const sorted = [...candidates].sort((a, b) => b.score - a.score);
-		const seen = new Set<string>();
-		const deduped: QueryResult[] = [];
-		for (const r of sorted) {
-			if (!seen.has(r.file)) {
-				seen.add(r.file);
-				deduped.push(r);
-			}
-		}
+		// Already deduped, just re-sort and slice
+		deduped.sort((a, b) => b.score - a.score);
 		return deduped.slice(0, topK);
 	}
 }
