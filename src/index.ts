@@ -457,6 +457,12 @@ export default async function (pi: ExtensionAPI) {
 		]);
 		ctx.ui.setStatus(UI_WIDGET_KEY, "Indexing…");
 
+		// Suppress LlamaIndex internal console chatter during indexing
+		// (e.g. "Starting new store from path: ...") so it doesn't
+		// corrupt the pi TUI layout.
+		const _originalLog = console.log;
+		console.log = () => {};
+
 		try {
 			const result = await buildIndex(
 				files,
@@ -495,6 +501,7 @@ export default async function (pi: ExtensionAPI) {
 		} catch (err) {
 			handleLlamaIndexError(err, "Indexing", pi, ctx);
 		} finally {
+			console.log = _originalLog;
 			(globalThis as Record<symbol, unknown>)[GLOBAL_CANCEL_KEY] = undefined;
 			ctx.ui.setWidget(UI_WIDGET_KEY, undefined);
 			ctx.ui.setStatus(UI_WIDGET_KEY, undefined);
