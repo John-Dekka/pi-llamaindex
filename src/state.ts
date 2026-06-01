@@ -126,7 +126,12 @@ export function setCachedReranker(v: RerankerModel) {
 
 export function getStorageDir(): string {
 	const override = process.env.PI_LLAMAINDEX_DIR;
-	if (override) return override;
+	if (override) {
+		// Ensure the override directory exists — callers (buildIndex, saveState)
+		// assume the returned path is ready to use.
+		mkdirSync(override, { recursive: true });
+		return override;
+	}
 
 	const piDir = join(homedir(), ".pi", "Llamaindex");
 	mkdirSync(piDir, { recursive: true });
@@ -136,7 +141,7 @@ export function getStorageDir(): string {
 /**
  * Resolve the path to the state.json file within a storage directory.
  *
- * @param storageDir - The storage directory (must exist or be creatable by saveState).
+ * @param storageDir - The storage directory (getStorageDir ensures it exists).
  * @returns Absolute path to the state file.
  */
 export function stateFile(storageDir: string): string {
