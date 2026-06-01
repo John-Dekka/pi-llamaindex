@@ -33,6 +33,8 @@ import {
 	MAX_DESCRIPTION_SNIPPET,
 	MAX_DESCRIPTION_PREVIEW,
 	STATUS_MAX_PATHS_SHOWN,
+	OMP_NUM_THREADS,
+	ORT_NUM_THREADS,
 } from "./config.js";
 
 // Re-export for other extensions (e.g., pi-run-batch)
@@ -43,10 +45,12 @@ export { buildIndex, getStorageDir, collectFiles };
 // ============
 
 export default async function (pi: ExtensionAPI) {
-	// Load debug infrastructure and set ONNX thread limits.
-	// Note: ESM requires the .js extension even though the source is .ts
-	// (jiti resolves it transparently).
-	await import("./debug.js");
+	// Set ONNX thread limits BEFORE any onnxruntime module is loaded.
+	// onnxruntime-node spawns one thread per CPU core by default (24+ threads),
+	// which wastes RAM. These env vars must be set before the first onnxruntime
+	// native module init.
+	process.env.OMP_NUM_THREADS = OMP_NUM_THREADS;
+	process.env.ORT_NUM_THREADS = ORT_NUM_THREADS;
 
 	const LI_SUBCOMMANDS: { value: string; label: string; description: string }[] = [
 		{

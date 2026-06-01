@@ -133,7 +133,6 @@ The extension is organized into focused modules under `src/`:
 | `state.ts` | Global state management (survives module reloads) |
 | `frontmatter.ts` | YAML frontmatter parser |
 | `scanner.ts` | File collection and extension filtering |
-| `debug.ts` | Debug logging and warning suppression |
 | `config.ts` | Named constants and tunable parameters |
 | `types.ts` | TypeScript type definitions |
 | `ui.ts` | Progress bar and ANSI helpers |
