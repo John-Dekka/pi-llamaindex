@@ -6,7 +6,7 @@
  * ONNX session (hundreds of MB) doesn't get re-created.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -144,5 +144,10 @@ export function loadState(storageDir: string): IndexState {
 
 export function saveState(storageDir: string, state: IndexState) {
 	mkdirSync(storageDir, { recursive: true });
-	writeFileSync(stateFile(storageDir), JSON.stringify(state, null, 2));
+	// Write to a temp file first, then rename atomically to prevent
+	// partial-write corruption if the process crashes mid-write.
+	// renameSync is atomic on the same filesystem (standard Unix guarantee).
+	const tmpPath = stateFile(storageDir) + ".tmp";
+	writeFileSync(tmpPath, JSON.stringify(state, null, 2));
+	renameSync(tmpPath, stateFile(storageDir));
 }
