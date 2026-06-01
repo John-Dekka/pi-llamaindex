@@ -6,7 +6,7 @@
  * ONNX session (hundreds of MB) doesn't get re-created.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, copyFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -161,7 +161,15 @@ export function saveState(storageDir: string, state: IndexState) {
 	// Write to a temp file first, then rename atomically to prevent
 	// partial-write corruption if the process crashes mid-write.
 	// renameSync is atomic on the same filesystem (standard Unix guarantee).
-	const tmpPath = stateFile(storageDir) + ".tmp";
+	// If rename fails (e.g. EXDEV cross-device link), fall back to copy+delete.
+	const targetPath = stateFile(storageDir);
+	const tmpPath = targetPath + ".tmp";
 	writeFileSync(tmpPath, JSON.stringify(state, null, 2));
-	renameSync(tmpPath, stateFile(storageDir));
+	try {
+		renameSync(tmpPath, targetPath);
+	} catch (err) {
+		// Cross-device rename (EXDEV) or permission error — fall back to copy
+		copyFileSync(tmpPath, targetPath);
+		rmSync(tmpPath);
+	}
 }
