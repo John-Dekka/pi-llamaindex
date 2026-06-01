@@ -41,6 +41,56 @@ import {
 export { buildIndex, getStorageDir, collectFiles };
 
 // ============
+// Shared error handler
+// ============
+
+/**
+ * Handle errors from LlamaIndex operations (indexing or querying).
+ *
+ * Distinguishes between:
+ *  - OpenAI API key errors (user action: unset or fix key)
+ *  - Network errors (user action: check connection)
+ *  - Everything else (generic message)
+ *
+ * @param operation - Human-readable operation name for error messages
+ */
+function handleLlamaIndexError(
+	err: unknown,
+	operation: string,
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+): void {
+	const msg = (err as Error).message;
+
+	if (msg.includes("API key") || msg.includes("401") || msg.includes("403")) {
+		ctx.ui.notify(
+			"OpenAI API key invalid. Unset OPENAI_API_KEY to use local HuggingFace embeddings.",
+			"error",
+		);
+		pi.sendMessage({
+			customType: "llamaindex",
+			content:
+				"## ❌ OpenAI Embedding Error\n\n" +
+				"Your `OPENAI_API_KEY` seems invalid or expired.\n\n" +
+				"**Fix:** Unset `OPENAI_API_KEY` to use local HuggingFace embeddings instead, " +
+				"or set it to a valid key.",
+			display: true,
+		});
+	} else if (
+		msg.includes("fetch") ||
+		msg.includes("ENOTFOUND") ||
+		msg.includes("download")
+	) {
+		ctx.ui.notify(
+			`${operation} failed — check your internet connection: ${msg}`,
+			"error",
+		);
+	} else {
+		ctx.ui.notify(`${operation} failed: ${msg}`, "error");
+	}
+}
+
+// ============
 // Extension entry
 // ============
 
@@ -421,28 +471,7 @@ export default async function (pi: ExtensionAPI) {
 				);
 			}
 		} catch (err) {
-			const msg = (err as Error).message;
-			ctx.ui.notify(`Indexing failed: ${msg}`, "error");
-			if (msg.includes("API key") || msg.includes("401") || msg.includes("403")) {
-				pi.sendMessage({
-					customType: "llamaindex",
-					content:
-						"## ❌ OpenAI Embedding Error\n\n" +
-						"Your `OPENAI_API_KEY` seems invalid or expired.\n\n" +
-						"**Fix:** Unset `OPENAI_API_KEY` to use local HuggingFace embeddings instead, " +
-						"or set it to a valid key.",
-					display: true,
-				});
-			} else if (
-				msg.includes("fetch") ||
-				msg.includes("ENOTFOUND") ||
-				msg.includes("download")
-			) {
-				ctx.ui.notify(
-					"Failed to download HuggingFace embedding model. Check your internet connection.",
-					"error",
-				);
-			}
+			handleLlamaIndexError(err, "Indexing", pi, ctx);
 		} finally {
 			ctx.ui.setWidget(UI_WIDGET_KEY, undefined);
 			ctx.ui.setStatus(UI_WIDGET_KEY, undefined);
@@ -538,33 +567,7 @@ export default async function (pi: ExtensionAPI) {
 				display: true,
 			});
 		} catch (err) {
-			const msg = (err as Error).message;
-			if (msg.includes("API key") || msg.includes("401") || msg.includes("403")) {
-				ctx.ui.notify(
-					"OpenAI API key invalid. Unset OPENAI_API_KEY to use local HuggingFace embeddings.",
-					"error",
-				);
-				pi.sendMessage({
-					customType: "llamaindex",
-					content:
-						"## ❌ OpenAI Embedding Error\n\n" +
-						"Your `OPENAI_API_KEY` seems invalid or expired.\n\n" +
-						"**Fix:** Unset `OPENAI_API_KEY` to use local HuggingFace embeddings instead, " +
-						"or set it to a valid key.",
-					display: true,
-				});
-			} else if (
-				msg.includes("fetch") ||
-				msg.includes("ENOTFOUND") ||
-				msg.includes("download")
-			) {
-				ctx.ui.notify(
-					"Failed to download HuggingFace embedding model. Check your internet connection.",
-					"error",
-				);
-			} else {
-				ctx.ui.notify(`Query failed: ${msg}`, "error");
-			}
+			handleLlamaIndexError(err, "Query", pi, ctx);
 		}
 	}
 
