@@ -59,6 +59,48 @@ export function fileToDocuments(fp: string, li: typeof import("llamaindex")): Ll
 	return convertMarkdownFile(content, fp, fileName, baseMeta, li);
 }
 
+/**
+ * Build a Document from parsed frontmatter and body for any doc type.
+ *
+ * Shared between YAML and Markdown files to eliminate DRY violation.
+ *
+ * @param docType - "yaml" or "markdown" — set in metadata.type
+ * @param hasRichBody - Whether the body contains meaningful content beyond the raw content
+ *   (for YAML: body.trim() is non-empty; for Markdown: body !== content i.e. frontmatter was found)
+ */
+function buildDocumentFromFrontmatter(
+	content: string,
+	frontmatter: Record<string, unknown>,
+	body: string,
+	tagsStr: string,
+	docType: string,
+	hasRichBody: boolean,
+	li: typeof import("llamaindex"),
+): LlamaIndexDocument[] {
+	const metadata: Record<string, unknown> = {
+		type: docType,
+		tags: tagsStr,
+		...Object.fromEntries(
+			Object.entries(frontmatter).filter(
+				([k, v]) => k !== "tags" && v !== undefined,
+			),
+		),
+	};
+
+	if (hasRichBody) {
+		// Combine metadata into a rich text representation for better retrieval
+		const textParts: string[] = [];
+		if (frontmatter.title) textParts.push(`# ${frontmatter.title}`);
+		if (frontmatter.category) textParts.push(`Category: ${frontmatter.category}`);
+		if (tagsStr) textParts.push(`Tags: ${tagsStr}`);
+		textParts.push(body);
+		return [new li.Document({ text: textParts.join("\n\n"), metadata })];
+	}
+
+	// No frontmatter or no body — return raw content
+	return [new li.Document({ text: content, metadata })];
+}
+
 function convertYamlFile(
 	content: string,
 	fp: string,
@@ -68,33 +110,22 @@ function convertYamlFile(
 ): LlamaIndexDocument[] {
 	const { frontmatter, body } = parseYamlFrontmatter(content);
 
-	// Store tags as comma-separated string for reliable metadata filtering
 	const tagsStr = frontmatter.tags?.length
 		? frontmatter.tags.join(", ")
 		: "";
 
-	const metadata: Record<string, unknown> = {
-		...baseMeta,
-		type: "yaml",
-		tags: tagsStr,
-		...Object.fromEntries(
-			Object.entries(frontmatter).filter(
-				([k, v]) => k !== "tags" && v !== undefined,
-			),
-		),
-	};
-
-	if (!body.trim()) {
-		return [new li.Document({ text: content, metadata })];
-	}
-
-	const textParts: string[] = [];
-	if (frontmatter.title) textParts.push(`# ${frontmatter.title}`);
-	if (frontmatter.category) textParts.push(`Category: ${frontmatter.category}`);
-	if (tagsStr) textParts.push(`Tags: ${tagsStr}`);
-	textParts.push(body);
-
-	return [new li.Document({ text: textParts.join("\n\n"), metadata })];
+	const doc = buildDocumentFromFrontmatter(
+		content,
+		frontmatter,
+		body,
+		tagsStr,
+		"yaml",
+		!!body.trim(),
+		li,
+	);
+	// Merge base meta (file, fileName) after the document is built
+	doc[0].metadata = { ...baseMeta, ...doc[0].metadata };
+	return doc;
 }
 
 function convertMarkdownFile(
@@ -110,33 +141,18 @@ function convertMarkdownFile(
 		? frontmatter.tags.join(", ")
 		: "";
 
-	const metadata: Record<string, unknown> = {
-		...baseMeta,
-		type: "markdown",
-		tags: tagsStr,
-		...Object.fromEntries(
-			Object.entries(frontmatter).filter(
-				([k, v]) => k !== "tags" && v !== undefined,
-			),
-		),
-	};
+	// hasRichBody = frontmatter was detected (body was split from content)
+	const hasFrontmatter = body !== content;
 
-	if (body !== content) {
-		// Has frontmatter — combine metadata into a rich text representation
-		const textParts: string[] = [];
-		if (frontmatter.title) textParts.push(`# ${frontmatter.title}`);
-		if (frontmatter.category) textParts.push(`Category: ${frontmatter.category}`);
-		if (tagsStr) textParts.push(`Tags: ${tagsStr}`);
-		textParts.push(body);
-
-		return [new li.Document({ text: textParts.join("\n\n"), metadata })];
-	}
-
-	// No frontmatter, plain markdown
-	return [
-		new li.Document({
-			text: content,
-			metadata,
-		}),
-	];
+	const doc = buildDocumentFromFrontmatter(
+		content,
+		frontmatter,
+		body,
+		tagsStr,
+		"markdown",
+		hasFrontmatter,
+		li,
+	);
+	doc[0].metadata = { ...baseMeta, ...doc[0].metadata };
+	return doc;
 }
