@@ -311,7 +311,6 @@ export async function buildIndex(
 	// enough for the progress bar and cuts I/O in half).
 	let totalInserted = 0;
 	let failedCount = 0;
-	let docsThisBatch = 0;
 	let batchStart = 0;
 	const allTags = new Set(getState().tags);
 	/** Files that failed during Phase 1 parsing — excluded from indexedPaths
@@ -355,9 +354,10 @@ export async function buildIndex(
 		const batchFiles = newFiles.slice(batchStart, batchStart + INDEX_BATCH_SIZE);
 
 		// Phase 1: Read and parse files into documents (fast, CPU-bound).
-		// Count documents in this batch as we parse them — no separate pre-count pass.
-		const batchDocs: LlamaIndexDocument[] = [];
-		let docsInBatch = 0;
+		// Keep docs grouped by file so Phase 2 can report per-file progress
+		// with the true total file count (not an estimated per-batch total).
+		type FileResult = { name: string; docs: LlamaIndexDocument[] };
+		const batchResults: FileResult[] = [];
 		for (let i = 0; i < batchFiles.length; i++) {
 			if (signal?.aborted) {
 				savePartialState();
@@ -367,8 +367,7 @@ export async function buildIndex(
 			const name = basename(fp);
 			try {
 				const docs = fileToDocuments(fp, li);
-				batchDocs.push(...docs);
-				docsInBatch += docs.length;
+				batchResults.push({ name, docs });
 			} catch (err) {
 				process.stderr.write(
 					`\r\x1b[2K[${batchStart + i + 1}/${newFiles.length}] ERROR ${name}: ${(err as Error).message}\n`,
@@ -378,31 +377,34 @@ export async function buildIndex(
 			}
 		}
 
-		if (batchDocs.length === 0) continue;
+		if (batchResults.length === 0) continue;
 
-		docsThisBatch = docsInBatch;
-
-		// Phase 2: Insert documents one-by-one with progress tracking.
-		// The embedding + storage is the slow part — progress bar drives UX.
-		// The total denominator is estimated from the current batch's doc count
-		// (totalInserted + docsInBatch), which is approximate but avoids the
-		// double-file-read of a pre-count pass. The bar may adjust at batch
-		// boundaries, which is fine.
+		// Phase 2: Insert documents file-by-file with progress tracking.
+		// Progress reports the file index out of the actual total file count,
+		// giving a stable denominator and a meaningful progress bar.
 		// Wrapped in try-catch so partial progress is saved even if a single
 		// document insertion fails partway through the batch.
 		try {
-			for (let i = 0; i < docsThisBatch; i++) {
-				if (signal?.aborted) {
-					savePartialState();
-					return { documents: totalInserted, failed: failedCount };
+			for (let fi = 0; fi < batchResults.length; fi++) {
+				const { name, docs } = batchResults[fi];
+				for (const doc of docs) {
+					if (signal?.aborted) {
+						savePartialState();
+						return { documents: totalInserted, failed: failedCount };
+					}
+					await (index as LlamaIndexIndex).insert(doc);
 				}
-				const doc = batchDocs[i];
-				const docIdx = totalInserted + i + 1;
-				const fileName =
-					(doc.metadata as Record<string, unknown>)?.fileName as string ||
-					`doc ${docIdx}`;
-				await (index as LlamaIndexIndex).insert(doc);
-				onProgress?.(docIdx, totalInserted + docsInBatch, fileName);
+				totalInserted += docs.length;
+				onProgress?.(batchStart + fi + 1, newFiles.length, name);
+
+				// Collect tags from this file
+				for (const doc of docs) {
+					const rawTags = doc.metadata?.tags;
+					const parsed = parseTags(rawTags);
+					for (const t of parsed) {
+						allTags.add(t);
+					}
+				}
 			}
 		} catch (err) {
 			// Save partial state before rethrowing so chunkCount stays consistent.
@@ -412,17 +414,6 @@ export async function buildIndex(
 			// silently losing data.
 			savePartialState();
 			throw err; // rethrow so the caller sees the failure
-		}
-
-		totalInserted += docsThisBatch;
-
-		// Collect tags from this batch's documents
-		for (const doc of batchDocs) {
-			const rawTags = doc.metadata?.tags;
-			const parsed = parseTags(rawTags);
-			for (const t of parsed) {
-				allTags.add(t);
-			}
 		}
 	}
 
