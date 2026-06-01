@@ -31,6 +31,7 @@ import {
 	MAX_COMMAND_TOP_K,
 
 	STATUS_MAX_PATHS_SHOWN,
+	GLOBAL_CANCEL_KEY,
 	OMP_NUM_THREADS,
 	ORT_NUM_THREADS,
 } from "./config.js";
@@ -112,6 +113,11 @@ export default async function (pi: ExtensionAPI) {
 			description: "Wipe the index and rebuild from scratch",
 		},
 		{
+			value: "cancel",
+			label: "cancel",
+			description: "Cancel the running index operation",
+		},
+		{
 			value: "query",
 			label: "query",
 			description: "Query the index",
@@ -148,10 +154,10 @@ export default async function (pi: ExtensionAPI) {
 			const parts = (args || "").trim().split(/\s+/);
 			const cmd = parts[0];
 
-			const knownCommands = new Set(["index", "rebuild", "query", "tags", "status"]);
+			const knownCommands = new Set(["index", "rebuild", "cancel", "query", "tags", "status"]);
 			if (cmd && !knownCommands.has(cmd)) {
 				ctx.ui.notify(
-					`Unknown subcommand: "${cmd}". Try: index, rebuild, query, tags, status`,
+					`Unknown subcommand: "${cmd}". Try: index, rebuild, cancel, query, tags, status`,
 					"warning",
 				);
 				return;
@@ -164,6 +170,15 @@ export default async function (pi: ExtensionAPI) {
 				case "rebuild":
 					// Append --rebuild so cmdIndex handles the wipe
 					await cmdIndex((parts.slice(1).join(" ") || ".") + " --rebuild", ctx);
+					break;
+				case "cancel":
+					const cancelCtrl: AbortController | undefined = (globalThis as Record<symbol, unknown>)[GLOBAL_CANCEL_KEY] as AbortController | undefined;
+					if (cancelCtrl) {
+						cancelCtrl.abort();
+						ctx.ui.notify("Index cancelled. Partial progress was saved.", "info");
+					} else {
+						ctx.ui.notify("No index operation is currently running.", "info");
+					}
 					break;
 				case "query":
 					await cmdQuery(parts.slice(1).join(" "), ctx);
@@ -431,6 +446,11 @@ export default async function (pi: ExtensionAPI) {
 
 		ctx.ui.notify(`Indexing ${files.length} files with LlamaIndex…`, "info");
 
+		// Set up a cancel controller so /li cancel can abort indexing
+		// (ctx.signal is undefined for commands per pi's extension docs).
+		const cancelController = new AbortController();
+		(globalThis as Record<symbol, unknown>)[GLOBAL_CANCEL_KEY] = cancelController;
+
 		ctx.ui.setWidget(UI_WIDGET_KEY, [
 			`${BOLD}${CYAN}LlamaIndex: Indexing${RESET}`,
 			`${DIM}Starting…${RESET}`,
@@ -450,7 +470,7 @@ export default async function (pi: ExtensionAPI) {
 						`${DIM}done:  ${RESET}${GREEN}${current}${RESET}/${total}`,
 					]);
 				},
-				ctx.signal,
+				cancelController.signal,
 				(msg) => ctx.ui.notify(msg, "warning"),
 			);
 
@@ -475,6 +495,7 @@ export default async function (pi: ExtensionAPI) {
 		} catch (err) {
 			handleLlamaIndexError(err, "Indexing", pi, ctx);
 		} finally {
+			(globalThis as Record<symbol, unknown>)[GLOBAL_CANCEL_KEY] = undefined;
 			ctx.ui.setWidget(UI_WIDGET_KEY, undefined);
 			ctx.ui.setStatus(UI_WIDGET_KEY, undefined);
 		}

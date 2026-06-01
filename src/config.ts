@@ -69,6 +69,11 @@ export const WASM_NUM_THREADS = 2;
  *  global state (GlobalStore interface) changes incompatibly. */
 export const GLOBAL_STATE_KEY = Symbol.for("pi-llamaindex:v0.2.0");
 
+/** Symbol key on globalThis for the current index/cancel AbortController.
+ *  Set when /li index starts, cleared on completion. /li cancel reads this
+ *  to abort the running operation, since ctx.signal is undefined for commands. */
+export const GLOBAL_CANCEL_KEY = Symbol.for("pi-llamaindex:cancel");
+
 // ============
 // Builder
 // ============
