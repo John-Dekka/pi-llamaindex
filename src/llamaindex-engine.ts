@@ -259,9 +259,13 @@ export function parseTags(rawTags: unknown): Set<string> {
  * Phase 1: Read and parse files into Documents (fast, CPU-bound).
  * Phase 2: Embed and insert documents into the index (slow, runs ONNX).
  *
+ * Progress is tracked per-document within each batch. The total denominator
+ * is estimated from the current batch's document count (no pre-count pass
+ * that would read every file from disk twice).
+ *
  * @param files - Full paths of files to index
  * @param storageDir - Directory for persisted index
- * @param onProgress - Optional progress callback for UI updates
+ * @param onProgress - Optional progress callback (current, estimatedTotal, fileName)
  * @returns Number of new documents indexed
  */
 export async function buildIndex(
@@ -299,10 +303,11 @@ export async function buildIndex(
 
 	// Process files in batches to avoid holding all documents in memory.
 	// Phase 1: Read/parse → Phase 2: Embed/insert, repeated per batch.
-	// Progress is reported at the document level for fine-grained UX.
+	// Progress is reported per file (the pre-count pass was removed to avoid
+	// reading every file from disk twice — file-level tracking is accurate
+	// enough for the progress bar and cuts I/O in half).
 	let totalInserted = 0;
 	let failedCount = 0;
-	let totalDocs = 0;
 	let docsThisBatch = 0;
 	let batchStart = 0;
 	const allTags = new Set(getState().tags);
@@ -331,16 +336,6 @@ export async function buildIndex(
 		saveState(storageDir, partialState);
 	};
 
-	// First pass: count total documents (fast — no ONNX yet)
-	for (const fp of newFiles) {
-		try {
-			const docs = fileToDocuments(fp, li);
-			totalDocs += docs.length;
-		} catch {
-			// will be counted as failed in the main pass
-		}
-	}
-
 	for (batchStart = 0; batchStart < newFiles.length; batchStart += INDEX_BATCH_SIZE) {
 		if (signal?.aborted) {
 			savePartialState();
@@ -349,8 +344,10 @@ export async function buildIndex(
 
 		const batchFiles = newFiles.slice(batchStart, batchStart + INDEX_BATCH_SIZE);
 
-		// Phase 1: Read and parse files into documents (fast, CPU-bound)
+		// Phase 1: Read and parse files into documents (fast, CPU-bound).
+		// Count documents in this batch as we parse them — no separate pre-count pass.
 		const batchDocs: LlamaIndexDocument[] = [];
+		let docsInBatch = 0;
 		for (let i = 0; i < batchFiles.length; i++) {
 			if (signal?.aborted) {
 				savePartialState();
@@ -361,6 +358,7 @@ export async function buildIndex(
 			try {
 				const docs = fileToDocuments(fp, li);
 				batchDocs.push(...docs);
+				docsInBatch += docs.length;
 			} catch (err) {
 				process.stderr.write(
 					`\r\x1b[2K[${batchStart + i + 1}/${newFiles.length}] ERROR ${name}: ${(err as Error).message}\n`,
@@ -371,10 +369,14 @@ export async function buildIndex(
 
 		if (batchDocs.length === 0) continue;
 
-		docsThisBatch = batchDocs.length;
+		docsThisBatch = docsInBatch;
 
 		// Phase 2: Insert documents one-by-one with progress tracking.
 		// The embedding + storage is the slow part — progress bar drives UX.
+		// The total denominator is estimated from the current batch's doc count
+		// (totalInserted + docsInBatch), which is approximate but avoids the
+		// double-file-read of a pre-count pass. The bar may adjust at batch
+		// boundaries, which is fine.
 		// Wrapped in try-catch so partial progress is saved even if a single
 		// document insertion fails partway through the batch.
 		try {
@@ -384,12 +386,12 @@ export async function buildIndex(
 					return { documents: totalInserted, failed: failedCount };
 				}
 				const doc = batchDocs[i];
-				const globalIdx = totalInserted + i + 1;
+				const docIdx = totalInserted + i + 1;
 				const fileName =
 					(doc.metadata as Record<string, unknown>)?.fileName as string ||
-					`doc ${globalIdx}`;
+					`doc ${docIdx}`;
 				await (index as LlamaIndexIndex).insert(doc);
-				onProgress?.(globalIdx, totalDocs || docsThisBatch, fileName);
+				onProgress?.(docIdx, totalInserted + docsInBatch, fileName);
 			}
 		} catch (err) {
 			// Save partial state before rethrowing so chunkCount stays consistent.
