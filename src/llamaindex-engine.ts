@@ -195,11 +195,14 @@ export function getActiveEmbedModelName(): string {
  * Falls back to loading from the storage directory.
  *
  * @param onError - Optional callback invoked when loading fails (e.g. corruption)
+ * @param preloadedState - If the caller already loaded state.json, pass it here
+ *   to avoid a redundant second read from disk (see M5).
  */
 export async function loadIndex(
 	storageDir: string,
 	signal?: AbortSignal,
 	onError?: (msg: string) => void,
+	preloadedState?: IndexState,
 ): Promise<LlamaIndexIndex | null> {
 	if (signal?.aborted) return null;
 	if (getIndex()) return getIndex();
@@ -215,7 +218,7 @@ export async function loadIndex(
 			nodes: [],
 		})) as unknown as LlamaIndexIndex;
 		setIndex(index);
-		setState(loadState(storageDir));
+		setState(preloadedState ?? loadState(storageDir));
 		return index;
 	} catch (err) {
 		const msg = `Index corrupted or incompatible — run \`/li rebuild\` to recreate it: ${(err as Error).message}`;
@@ -469,12 +472,8 @@ export async function queryIndex(
 
 	if (signal?.aborted) return [];
 
-	// Embeddings must be configured before loading the index and before
-	// retrieving — the retriever needs them to embed the query text.
-	ensureEmbeddings(li);
-	if (signal?.aborted) return [];
-
-	// Check for embedding model mismatch (stale index)
+	// Check for embedding model mismatch (stale index) BEFORE loading the index
+	// — loadState is cheap (reads a small JSON file).
 	const state = loadState(storageDir);
 	const activeModel = getActiveEmbedModelName();
 	if (state.embedModel && state.embedModel !== activeModel) {
@@ -488,11 +487,18 @@ export async function queryIndex(
 	let index = getIndex();
 	if (!index) {
 		// Notify on index load failure — the user can rebuild with /li rebuild
+		// Pass pre-loaded state so loadIndex doesn't read state.json again from disk.
 		index = await loadIndex(storageDir, signal, (msg) => {
 			process.stderr.write(`[llamaindex] queryIndex: ${msg}\n`);
-		});
+		}, state);
 		if (!index || signal?.aborted) return [];
 	}
+
+	// Embeddings must be configured before retrieval — the retriever needs them
+	// to embed the query text. Do this AFTER confirming we have an index so we
+	// don't load a 130MB model only to return zero results.
+	ensureEmbeddings(li);
+	if (signal?.aborted) return [];
 
 	// Stage 1: Retrieve N candidates with the bi-encoder (fast, broad).
 	// The cross-encoder reranks these — RETRIEVER_TOP_K is enough to cover
