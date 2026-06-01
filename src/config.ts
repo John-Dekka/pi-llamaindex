@@ -41,14 +41,6 @@ export const MAX_COMMAND_TOP_K = 50;
 /** Maximum characters of chunk text passed to the reranker */
 export const MAX_CHUNK_LENGTH = 6000;
 
-/** Maximum characters of chunk text shown in li_query tool output */
-export const MAX_PREVIEW_LENGTH = 2000;
-
-/** Maximum characters of description shown in /li query output */
-export const MAX_DESCRIPTION_SNIPPET = 400;
-
-/** Maximum characters of description shown in li_query tool output */
-export const MAX_DESCRIPTION_PREVIEW = 300;
 
 /** Maximum query string length (prevents OOM from pathological input) */
 export const MAX_QUERY_LENGTH = 5000;
