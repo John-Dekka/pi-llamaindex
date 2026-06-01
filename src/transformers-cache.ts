@@ -18,12 +18,25 @@ export async function configureTransformersCache() {
 		env.cacheDir = cacheDir;
 		env.wasm = env.wasm || {};
 		env.wasm.numThreads = WASM_NUM_THREADS;
-	} catch {
-		// @huggingface/transformers may not be loaded yet —
-		// the embedding model's getExtractor() will read env.cacheDir later.
-		// Log only in debug mode to avoid noise on first load.
-		if (process.env.PI_LLAMAINDEX_DEBUG) {
-			process.stderr.write("[llamaindex] transformers-cache: @huggingface/transformers not yet available\n");
+	} catch (err) {
+		// @huggingface/transformers may not be loaded yet during early startup —
+		// the embedding model's getExtractor() will read env.cacheDir later from
+		// the env singleton. If the module is genuinely missing (not just transient),
+		// log a warning so the user knows embeddings will fail.
+		const isModuleNotFound =
+			(err as NodeJS.ErrnoException)?.code === "ERR_MODULE_NOT_FOUND" ||
+			(err as Error)?.message?.includes("Cannot find module");
+		if (isModuleNotFound) {
+			if (process.env.PI_LLAMAINDEX_DEBUG) {
+				process.stderr.write(
+					"[llamaindex] transformers-cache: @huggingface/transformers not yet available\n",
+				);
+			}
+		} else {
+			// Real error (corrupted install, init failure, etc.) — warn the user
+			process.stderr.write(
+				`[llamaindex] transformers-cache: ${(err as Error).message}\n`,
+			);
 		}
 	}
 }
