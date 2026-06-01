@@ -29,9 +29,7 @@ import {
 	DEFAULT_TOP_K,
 	MAX_TOP_K,
 	MAX_COMMAND_TOP_K,
-	MAX_PREVIEW_LENGTH,
 	MAX_DESCRIPTION_SNIPPET,
-	MAX_DESCRIPTION_PREVIEW,
 	STATUS_MAX_PATHS_SHOWN,
 	OMP_NUM_THREADS,
 	ORT_NUM_THREADS,
@@ -196,7 +194,8 @@ export default async function (pi: ExtensionAPI) {
 			"Query the LlamaIndex RAG index for relevant document chunks",
 		promptGuidelines: [
 			"Use li_query when you need to find information from previously indexed YAML or Markdown documentation.",
-			"Results include the source file path, relevance score, and a text preview of each matching chunk.",
+			"Results include the source file path, relevance score, and a preview (description / metadata) of each match.",
+			"If you need the full content of a file, use the read tool to read it.",
 		],
 		parameters: Type.Object({
 			query: Type.String({
@@ -270,14 +269,17 @@ export default async function (pi: ExtensionAPI) {
 				lines.push(`[${i + 1}] ${r.fileName} (score: ${scoreStr}%)`);
 				lines.push(`    File: ${r.file}`);
 				if (r.title) lines.push(`    Title: ${r.title}`);
+				if (r.category) lines.push(`    Category: ${r.category}`);
 				if (r.tags) lines.push(`    Tags: ${r.tags}`);
-				if (r.description) lines.push(`    Description: ${r.description.slice(0, MAX_DESCRIPTION_PREVIEW)}`);
-				lines.push(`    ---`);
-				// Chunk text — the reranker's top-scoring fragment from this file.
-				// Agent can read() the full file if it needs other sections.
-				lines.push(
-					`    ${r.text.slice(0, MAX_PREVIEW_LENGTH).replace(/\n/g, "\n    ")}`,
-				);
+				if (r.description) {
+					const snippet = r.description.slice(0, MAX_DESCRIPTION_SNIPPET);
+					const indented = snippet
+						.split("\n")
+						.map((line: string) => (line ? "    " + line : ""))
+						.join("\n");
+					lines.push(indented);
+				}
+				// Preview-only. Agent can read() the full file if it needs more context.
 				lines.push("");
 			}
 
