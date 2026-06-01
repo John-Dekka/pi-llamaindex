@@ -104,9 +104,39 @@ describe("fileToDocuments", () => {
 });
 
 describe("fileToDocuments with .mdx files", () => {
+	let testDir: string;
+
+	beforeEach(() => {
+		testDir = join(tmpdir(), "pi-llamaindex-conv-mdx-test-" + Date.now());
+		mkdirSync(testDir, { recursive: true });
+	});
+
+	afterEach(() => {
+		rmSync(testDir, { recursive: true, force: true });
+	});
+
 	it("handles .mdx extension the same as .md", () => {
-		// This reads from disk so will gracefully return empty
-		const docs = fileToDocuments("/path/to/component.mdx", createMockLi());
-		expect(Array.isArray(docs)).toBe(true);
+		const fp = join(testDir, "component.mdx");
+		writeFileSync(fp, "# MDX Component\n\nThis is an MDX file.", "utf-8");
+		const docs = fileToDocuments(fp, createMockLi());
+		expect(docs).toHaveLength(1);
+		expect(docs[0].text).toBe("# MDX Component\n\nThis is an MDX file.");
+		expect(docs[0].metadata.type).toBe("markdown");
+		expect(docs[0].metadata.fileName).toBe("component.mdx");
+	});
+
+	it("handles .mdx with YAML frontmatter", () => {
+		const fp = join(testDir, "article.mdx");
+		writeFileSync(
+			fp,
+			"---\ntitle: MDX Article\ntags: [mdx, frontmatter]\n---\n\nMDX body content.",
+			"utf-8",
+		);
+		const docs = fileToDocuments(fp, createMockLi());
+		expect(docs).toHaveLength(1);
+		expect(docs[0].text).toContain("# MDX Article");
+		expect(docs[0].text).toContain("Tags: mdx, frontmatter");
+		expect(docs[0].text).toContain("MDX body content.");
+		expect(docs[0].metadata.tags).toBe("mdx, frontmatter");
 	});
 });

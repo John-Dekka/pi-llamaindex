@@ -100,6 +100,15 @@ export default async function (pi: ExtensionAPI) {
 			const parts = (args || "").trim().split(/\s+/);
 			const cmd = parts[0];
 
+			const knownCommands = new Set(["index", "rebuild", "query", "tags", "status"]);
+			if (cmd && !knownCommands.has(cmd)) {
+				ctx.ui.notify(
+					`Unknown subcommand: "${cmd}". Try: index, rebuild, query, tags, status`,
+					"warning",
+				);
+				return;
+			}
+
 			switch (cmd) {
 				case "index":
 					await cmdIndex(parts.slice(1).join(" ") || ".", ctx);
