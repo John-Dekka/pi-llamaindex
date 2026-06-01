@@ -1,222 +1,143 @@
 # LlamaIndex RAG Extension for pi
 
-A semantic search engine for your local Markdown and YAML files powered by LlamaIndex. Your assistant can search indexed documents using natural language and filter by tags.
+A local semantic search engine for your Markdown and YAML files. Your assistant can search indexed documents using natural language and filter by tags. No API keys, no data leaving your machine.
 
 ## Quick Start
 
-### Install
+### Install the extension
 
 ```bash
 pi install git:github.com/John-Dekka/pi-llamaindex
 ```
 
-No API key needed. The extension uses local HuggingFace embeddings out of the box.
+No API key. No setup. Just install and go.
 
-### Basic usage
+### Index your documents
 
+```bash
+/li index ~/my-docs        # Index a directory
+/li index ~/my-docs --rebuild  # Wipe and rebuild
+/li query "bullet patterns"    # Search semantically
+/li query "collision" 10 --tag tile-collision  # Filter by tag
+/li tags                  # Explore available tags
+/li status                # Show index stats
 ```
-/li index ~/my-docs                           # Index a directory
-/li rebuild ~/my-docs                         # Wipe and rebuild from scratch
-/li query "bullet patterns"                    # Query (default: 5 results)
-/li query "collision" 10                       # Query with custom result count
-/li query "collision" --tag tile-collision     # Query filtered by tag
-/li query "collision" 10 --tag tile-collision  # Query with count + tag filter
-/li tags                                      # List all unique tags
-/li status                                    # Show stats
-```
+
+That's it. Your assistant can now search your local documents by meaning, not just keywords.
 
 ## What It Is
 
-LlamaIndex RAG is an extension for [pi](https://pi.dev) that gives your coding assistant the ability to search your local documents using semantic similarity. Instead of fuzzy-matching keywords, it understands the meaning behind your queries and returns relevant results even when the exact terms don't match.
+LlamaIndex RAG is an extension for [pi](https://pi.dev) that gives your coding assistant the ability to search your local documents using semantic similarity. Instead of matching keywords, it understands what you mean and returns relevant results even when the exact terms don't match.
 
-It indexes YAML frontmatter files and Markdown documents using [LlamaIndex.TS](https://ts.llamaindex.ai/) for both storage and retrieval. The agent can query the index via the `li_query` tool; you manage it via `/li` commands.
+It indexes YAML frontmatter files, Markdown documents, and MDX files using [LlamaIndex.TS](https://ts.llamaindex.ai/). The agent can query the index via the `li_query` tool; you manage it via `/li` commands.
 
 ## How It Works
 
-1. **Install the extension** with `pi install`
-2. **Index your documents** with `/li index <path>`
-3. **Search semantically** with `/li query <text>` or let your agent use `li_query`
-4. **Get relevant results** — matching chunks with file paths, relevance scores, and text previews
+1. **Install the extension** — One command, no config
+2. **Index your docs** — `/li index <path>`, it scans for `.md`, `.mdx`, `.yaml`, `.yml`
+3. **Search naturally** — `/li query <text>` or let your clanker use `li_query()`
+4. **Get the right results** — Matching chunks with file paths, relevance scores, and metadata
 
-### Two-Stage Retrieval Pipeline
+The extension automatically:
 
-The extension uses a **two-stage retrieval pipeline** for maximum relevance:
-
-1. **Stage 1 — Bi-encoder retrieval** — `BAAI/bge-small-en-v1.5` (130MB) embeds the query and finds the top 25 most similar documents from the vector index. Fast, broad, catches everything remotely relevant.
-2. **Stage 2 — Cross-encoder reranking** — `Xenova/ms-marco-MiniLM-L-12-v2` (~87MB quantized) processes each candidate as a query+document *pair* through a transformer, producing far more accurate relevance scores. The top 25 are reranked in batches of 10 and the best results are returned (default 5, adjustable up to 50).
-
-The bi-encoder embeds query and documents independently — fast but shallow. The cross-encoder reads them *together*, understanding nuanced relevance that vector similarity alone misses. This is especially powerful for code-heavy documents where function signatures, implementation details, and usage context need to be weighed holistically.
-
-If the reranker fails for any reason, the pipeline **gracefully falls back** to bi-encoder similarity scores so you never get an empty result set due to a model error.
-
-### Additional Features
-
-| Feature | Detail |
-|---|---|
-| **No API key required** | Local HuggingFace embeddings via Transformers.js (ONNX), fully offline |
-| **OpenAI fallback** | Set `OPENAI_API_KEY` to use `text-embedding-3-small` for higher quality |
-| **YAML frontmatter extraction** | `title`, `category`, `tags`, and custom fields from `---` blocks |
-| **Incremental indexing** | Only new or changed files are embedded; existing index untouched |
-| **Tag filtering** | `--tag <name>` narrows results to matching documents (AND logic) |
-| **Configurable result count** | `/li query <text> <limit>` accepts 1–50 results; default is 5 |
-| **Cancellation support** | Abort signals propagated through embedding, retrieval, and reranking |
-| **Pre-downloaded models** | Both models cached to `~/.cache/pi-llamaindex/transformers/` at install time |
-| **Batch processing** | Files are parsed and indexed in batches (50 at a time) to minimize memory |
-
+- **Uses a two-stage retrieval pipeline** — Bi-encoder (fast, broad) finds candidates, cross-encoder (accurate, reranks them). You get the best of both worlds
+- **Works fully offline** — Local HuggingFace embeddings via Transformers.js (ONNX). No API calls, no data leaves your machine
+- **Falls back to OpenAI** — Set `OPENAI_API_KEY` and it upgrades to `text-embedding-3-small` automatically
+- **Indexes incrementally** — The second time you index, only new and changed files get processed. Seconds, not minutes
+- **Supports tag filtering** — YAML frontmatter `tags:` fields are extracted and indexed. Filter queries with `--tag <name>`
+- **Survives reinstalls** — Both ML models are cached at `~/.cache/pi-llamaindex/transformers/`, not in `node_modules`. Delete and reinstall — models are still there
+- **Cancels cleanly** — Hit Escape during a slow query and everything stops: embedding, retrieval, reranking. No orphaned processes
 
 ### Commands
 
-| Command | Description |
+| Command | What it does |
 |---------|-------------|
 | `/li index <path>` | Index a file or directory (`.md`, `.mdx`, `.yaml`, `.yml`) |
-| `/li index <path> --rebuild` | Wipe the index and rebuild from scratch |
-| `/li rebuild <path>` | Alias for `/li index <path> --rebuild` |
-| `/li query <text> [<limit>]` | Query the index — shows **metadata + description** for each result (default: 5, max: 50) |
-| `/li query <text> [<limit>] --tag <tag> [--tag ...]` | Query filtered by one or more tags (AND logic) |
-| `/li tags` | List all unique tags extracted from indexed YAML frontmatter |
-| `/li status` | Show index statistics, embedding model, and storage info |
+| `/li index <path> --rebuild` | Wipe and rebuild from scratch |
+| `/li rebuild <path>` | Shortcut for the above |
+| `/li query <text> [<limit>]` | Search the index — shows metadata + description (default 10, max 50) |
+| `/li query <text> [<limit>] --tag <tag>` | Search, filtered by tag (AND logic for multiple `--tag` flags) |
+| `/li tags` | List all unique tags from your indexed files |
+| `/li status` | Index stats: file count, chunk count, embedding model, storage path |
 
 ### Agent Tools
 
-| Tool | Description |
+| Tool | What it does |
 |------|-------------|
-| `li_query(query, limit?, tags?)` | Search the RAG index. Returns **full file content** — title, description, code, gotchas, and usage — up to 6000 chars per chunk. Default 5 results, max 20. |
-| `li_tags()` | List all unique tags from indexed documents. Useful for discovering available tags before filtering. |
-
-> **Result format:**
-> - `/li query` — top results (adjustable), each showing title, file, tags/category, and first ~400 chars of description (no code).
-> - `li_query()` — top results (max 20), each with complete file content including code and gotchas.
+| `li_query(query, limit?, tags?)` | Search the RAG index. Returns structured metadata (title, category, tags, description) for each match. Default 10 results, max 20. Use `read` on the file path to get the full content. |
+| `li_tags()` | List all unique tags. Use this to discover what tags exist before querying with filters. |
 
 ### YAML Frontmatter
 
-Files with YAML frontmatter (`---` delimited blocks) have their metadata extracted automatically — this works for `.yaml`, `.yml`, `.md`, and `.mdx` files:
+Files with YAML frontmatter (`---` delimited blocks) get their metadata extracted automatically:
 
 ```yaml
 ---
 title: Bullet Pool with Timer and Behavior Callbacks
 category: BulletSystem
-tags: [bullet-hell, object-pool, timer-callback, behavior-function]
-description: A short description what the document showcases.
+tags: [bullet-hell, object-pool, timer-callback]
+description: A short description of what this document covers.
 ---
 
 The actual document content goes here...
 ```
 
-- `title`, `category`, `tags`, and `description` are extracted as structured metadata
-- Custom fields beyond the known set are preserved and indexed
-- The body (after the closing `---`) becomes the document content
-- Both metadata and body are combined into a rich text representation for better retrieval
-- Tags can be browsed with `/li tags` and used to filter queries with `--tag <tagname>`
+Fields like `title`, `category`, `tags`, and `description` become structured metadata. Custom fields are preserved and indexed too. Tags let you slice your document set however you like — browse them with `/li tags`, filter with `--tag`.
 
 ### Supported File Types
 
-- `.md`, `.mdx` — Markdown files (YAML frontmatter extracted when present)
-- `.yaml`, `.yml` — YAML frontmatter files with markdown body
-- Binary files with matching extensions are gracefully skipped with a logged warning
+- `.md`, `.mdx` — Markdown (YAML frontmatter extracted when present)
+- `.yaml`, `.yml` — Data files with optional markdown body
+- Binary files with matching extensions are gracefully skipped. No crashes.
 
 ### Storage
 
-The index is persisted at `~/.pi/Llamaindex/`. Override with `PI_LLAMAINDEX_DIR` environment variable.
-Model cache is stored separately at `~/.cache/pi-llamaindex/transformers/` and survives `node_modules` deletion.
-## Architecture
-
-### Module Structure
-
-The extension is organized into focused modules under `src/`:
-
-| Module | Responsibility |
-|--------|---------------|
-| `index.ts` | Pi extension entry point, command/tool registrations |
-| `llamaindex-engine.ts` | Core LlamaIndex lifecycle (build, query, embed config) |
-| `reranker.ts` | Cross-encoder reranker with batch inference |
-| `converter.ts` | File-to-Document conversion with metadata extraction |
-| `state.ts` | Global state management (survives module reloads) |
-| `frontmatter.ts` | YAML frontmatter parser |
-| `scanner.ts` | File collection and extension filtering |
-| `config.ts` | Named constants and tunable parameters |
-| `types.ts` | TypeScript type definitions |
-| `ui.ts` | Progress bar and ANSI helpers |
-
-### Key Design Decisions
-
-- **State on `globalThis`** — The vector index (ONNX session, hundreds of MB) is cached on `globalThis` via a `Symbol` key, surviving Pi's extension reload system between tool calls.
-- **Lazy loading with promise gate** — LlamaIndex packages are loaded dynamically, not statically, to ensure warning suppression runs first. A promise gate prevents duplicate concurrent imports.
-- **Batch document processing** — Files are parsed and indexed in batches of 50 to keep peak memory under control, rather than loading all documents before embedding.
-- **Abort signal propagation** — Cancellation signals are checked before every async step: embedding, retrieval, and reranking. The user can abort a slow query with Escape.
-
-## Testing
-
-The extension includes **29 unit tests** across the pure-functional modules:
-
-```
-✓ tests/config.test.ts       (5 tests)  — constant validation
-✓ tests/frontmatter.test.ts  (10 tests) — YAML frontmatter parsing
-✓ tests/scanner.test.ts      (14 tests) — file collection and extension filtering
-```
-
-Run them with:
-
-```bash
-npm test
-# or
-npx vitest run
-```
-
-Tests cover:
-- Frontmatter with all field combinations, invalid YAML, string vs array tags
-- File extension filtering (case-insensitive, allowed/denied)
-- Directory walking (excludes hidden dirs and `node_modules`, recursive collection)
-- Empty and non-existent directory handling
+Index lives at `~/.pi/Llamaindex/`. Override with `PI_LLAMAINDEX_DIR`. Model cache is at `~/.cache/pi-llamaindex/transformers/`.
 
 ## Why It's Really Good
 
 ### No API Keys Required
 
-Unlike most RAG solutions, this extension works completely offline with no API keys. The `BAAI/bge-small-en-v1.5` model runs entirely in-process via Transformers.js (ONNX). If you *do* have an `OPENAI_API_KEY`, it automatically upgrades to `text-embedding-3-small` for higher-quality embeddings. Best of both worlds.
+Most RAG solutions want you to sign up for something. This one works offline with zero setup. The `BAAI/bge-small-en-v1.5` model runs entirely in-process via Transformers.js (ONNX). Have an `OPENAI_API_KEY`? It upgrades to `text-embedding-3-small` automatically. Best of both worlds.
 
-### Two-Stage Retrieval With Cross-Encoder Reranking
+### Two-Stage Retrieval With Reranking
 
-Most RAG pipelines stop at vector similarity — embed query, find nearest neighbors, done. This extension adds a second stage: a cross-encoder that processes each candidate as a query+document *pair* through a transformer, producing relevance scores that are dramatically more accurate.
+Most RAG pipelines stop at vector similarity — embed a query, find nearest neighbors, done. This one adds a cross-encoder that reads each candidate as a query+document *pair* through a transformer. The difference is dramatic.
 
-For your data (YAML with code blocks, descriptions, gotchas, and usage context), the difference is significant. A bi-encoder sees "capture" and "collision" as separate concepts. The cross-encoder reads "how to detect collision with the player's capture item" next to "For collision detection with the player's capture item, use simple AABB" and understands they're talking about the same thing.
+A bi-encoder sees "capture" and "collision" as unrelated concepts. The cross-encoder reads "how to detect collision with the player's capture item" next to "For collision detection, use simple AABB" and understands they're the same thing.
+
+If the reranker ever fails, the pipeline falls back to bi-encoder scores. You always get results.
+
+### Pre-Dedup Saves Reranker Work
+
+Before the slow cross-encoder runs, the pipeline deduplicates by file — keeping only the best chunk per file (by bi-encoder score). The reranker's real value is in cross-file comparison, not picking between chunks of the same file. This cuts reranker work by about half with no accuracy loss.
 
 ### Tag Filtering Keeps Things Organized
 
-For repos with hundreds of documents, tags let you zoom in on exactly what matters. Every YAML frontmatter file's `tags` field is extracted and indexed. Use `/li tags` to explore, then filter with `--tag <name>`.
+Hundreds of docs? Tags let you zoom in on exactly what matters. Every YAML frontmatter `tags:` field is extracted and indexed. `/li tags` to browse, `--tag <name>` to filter. Simple.
 
 ### Incremental Indexing Is Fast
 
-Index a 500-file directory the first time and it takes a while. Index it again — seconds. Only new and changed files get processed. The existing index is updated in place without rebuilding.
+First index of 500 files takes a while. Second index? Seconds. Only new and changed files get processed. The existing index updates in place.
 
-### Models Survive Reinstalls
+### Models Survive npm install
 
-Both the embedding model (130MB) and the reranker (~87MB quantized) are cached to `~/.cache/pi-llamaindex/transformers/`, not inside `node_modules/`. Delete `node_modules/`, reinstall, and the models are still there — the `postinstall` script detects they're already cached and skips re-downloading.
+Both models (130MB embedding, ~87MB quantized reranker) are cached to `~/.cache/pi-llamaindex/transformers/`, not inside `node_modules/`. Delete `node_modules/`, reinstall — models are already there. The `postinstall` script checks the cache and skips re-downloading.
 
 ### You Own Your Data
 
-Every embedding stays on your machine. No API calls, no data sent to third parties (unless you opt into the OpenAI model). If you need privacy, just skip the `OPENAI_API_KEY`.
+Every embedding stays on your machine. No API calls, no data to third parties (unless you set `OPENAI_API_KEY`). If privacy matters, skip the key and stay fully offline.
+
+### Created by pi
+
+This extension was written by pi itself. It saw the need for local semantic search, wrote the code, and now it's part of the ecosystem. 🥳
 
 ## Requirements
 
-- [Pi](https://pi.dev) coding agent
+- [pi](https://pi.dev) coding agent
 - Node.js 20+ (Transformers.js requires Node 20+)
 - No API key required (local embeddings by default)
 - Optional: `OPENAI_API_KEY` for OpenAI embeddings
-
-## Development
-
-```bash
-# Install dependencies
-npm install
-
-# Run tests
-npm test
-
-# Watch mode
-npm run test:watch
-```
-
-The extension uses [Vitest](https://vitest.dev/) for testing. All tests are in `tests/` and run without LlamaIndex dependencies — they test the pure-functional modules (frontmatter parser, scanner, config).
 
 ## License
 
